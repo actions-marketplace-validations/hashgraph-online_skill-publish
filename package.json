@@ -1,0 +1,41 @@
+{
+  "name": "skill-publish",
+  "version": "1.0.0",
+  "description": "Publish trustless, immutable, on-chain skill releases via the Hashgraph Online Registry Broker.",
+  "type": "module",
+  "bin": {
+    "skill-publish": "bin/cli.mjs"
+  },
+  "files": [
+    "action.yml",
+    "entrypoint.mjs",
+    "bin/",
+    "schemas/",
+    "examples/",
+    "apis.json",
+    "llms.txt",
+    "README.md",
+    "CITATION.cff"
+  ],
+  "keywords": [
+    "hcs-26",
+    "skill-registry",
+    "registry-broker",
+    "hedera",
+    "cli",
+    "github-action"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hashgraph-online/skill-publish.git"
+  },
+  "license": "Apache-2.0",
+  "author": "Hashgraph Online <hello@hashgraphonline.com>",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "lint": "node --check entrypoint.mjs && node --check bin/cli.mjs",
+    "smoke:help": "node bin/cli.mjs --help"
+  }
+}

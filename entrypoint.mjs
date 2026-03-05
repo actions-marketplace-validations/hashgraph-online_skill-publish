@@ -180,7 +180,7 @@ const findExistingSkillVersion = async (params) => {
   const { apiBaseUrl, apiKey, name, version } = params;
   const response = await requestJson({
     method: 'GET',
-    url: buildApiUrl(apiBaseUrl, '/skills/list', {
+    url: buildApiUrl(apiBaseUrl, '/skills', {
       name,
       version,
       limit: 20,
