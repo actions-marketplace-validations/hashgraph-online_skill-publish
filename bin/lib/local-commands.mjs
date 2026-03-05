@@ -126,6 +126,8 @@ export async function runSetupCommand(options, context) {
     if (result.funding.transactionId) {
       process.stdout.write(`Txn:      ${result.funding.transactionId}\n`);
     }
+  } else if (result.fundingError) {
+    process.stdout.write(`${context.colors.yellow('Funding skipped')}: ${result.fundingError}\n`);
   } else {
     process.stdout.write(
       `${context.colors.yellow('No funding executed')}. Pass --hbar <amount> to top up credits now.\n`,

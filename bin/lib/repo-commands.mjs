@@ -34,6 +34,23 @@ function normalizeBoolean(value, fallback) {
   return lowered === '1' || lowered === 'true' || lowered === 'yes';
 }
 
+function normalizeSkillDir(value) {
+  const trimmed = toPosix(String(value ?? '').trim());
+  if (!trimmed) {
+    throw new Error('Skill directory cannot be empty.');
+  }
+  if (trimmed.startsWith('/')) {
+    throw new Error('Skill directory must be relative.');
+  }
+  if (trimmed.includes('..')) {
+    throw new Error('Skill directory cannot contain parent path segments.');
+  }
+  if (!/^[A-Za-z0-9._/-]+$/u.test(trimmed)) {
+    throw new Error('Skill directory contains invalid characters.');
+  }
+  return trimmed;
+}
+
 function toPosix(relativePath) {
   return relativePath.split(path.sep).join(path.posix.sep);
 }
@@ -127,7 +144,9 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
+      pull-requests: write
+      issues: write
     steps:
       - uses: actions/checkout@v4
       - name: Publish skill package
@@ -234,13 +253,14 @@ export async function runSetupActionCommand(options, positionals, context) {
   }
 
   const detectedSkillDir = await detectSkillDir(repoDir);
-  const requestedSkillDir = String(options['skill-dir'] ?? detectedSkillDir).trim();
-  if (!requestedSkillDir) {
+  const skillDirValue = String(options['skill-dir'] ?? detectedSkillDir).trim();
+  if (!skillDirValue) {
     context.fail(
       'Could not detect skill directory. Pass --skill-dir (for example --skill-dir skills/my-skill).',
       'setup-action',
     );
   }
+  const requestedSkillDir = normalizeSkillDir(skillDirValue);
 
   const workflowPath = String(options['workflow-path'] ?? '.github/workflows/publish-skill.yml').trim();
   const trigger = normalizeTrigger(options.trigger);
@@ -282,7 +302,7 @@ export async function runScaffoldRepoCommand(options, positionals, context) {
 
   const description = String(options.description ?? 'Describe what this skill helps users do.').trim();
   const version = String(options.version ?? '1.0.0').trim() || '1.0.0';
-  const skillDir = String(options['skill-dir'] ?? `skills/${skillName}`).trim();
+  const skillDir = normalizeSkillDir(options['skill-dir'] ?? `skills/${skillName}`);
   const trigger = normalizeTrigger(options.trigger);
   const workflowPath = String(options['workflow-path'] ?? '.github/workflows/publish-skill.yml').trim();
   const annotate = normalizeBoolean(options.annotate, true);

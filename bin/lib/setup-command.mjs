@@ -150,26 +150,10 @@ async function fetchBalance(baseUrl, apiKey, accountId) {
 }
 
 async function purchaseCreditsWithHbar(params) {
-  const response = await requestJson({
-    method: 'POST',
-    url: `${params.baseUrl}/credits/purchase`,
-    apiKey: params.apiKey,
-    accountId: params.accountId,
-    body: {
-      accountId: params.accountId,
-      hbarAmount: params.hbarAmount,
-      payerKey: params.hederaPrivateKey,
-      ...(params.memo ? { memo: params.memo } : {}),
-      metadata: {
-        source: 'skill-publish-setup',
-      },
-    },
-  });
-  return {
-    credited: Number(response?.credited ?? response?.credits ?? 0),
-    newBalance: Number(response?.newBalance ?? response?.balance ?? 0),
-    transactionId: typeof response?.transactionId === 'string' ? response.transactionId : '',
-  };
+  throw new Error(
+    `Automatic CLI funding is currently disabled for security. Requested ${params.hbarAmount} HBAR top-up. ` +
+      'Use the broker billing flow to purchase credits without transmitting a private key.',
+  );
 }
 
 export async function runSetupFlow(options) {
@@ -219,25 +203,30 @@ export async function runSetupFlow(options) {
   const balanceBeforeFunding = await fetchBalance(baseUrl, apiKey, accountId);
 
   let funding = null;
+  let fundingError = '';
   if (hbarAmount > 0) {
     if (!hederaPrivateKey) {
       throw new Error('HBAR top-up requires --hedera-private-key for signed payment.');
     }
-    const fundingResult = await purchaseCreditsWithHbar({
-      baseUrl,
-      apiKey,
-      accountId,
-      hbarAmount,
-      hederaPrivateKey,
-      memo: String(options.memo ?? '').trim(),
-    });
-    const currentBalance = await fetchBalance(baseUrl, apiKey, accountId);
-    funding = {
-      hbarAmount,
-      credited: fundingResult.credited,
-      balanceAfterFunding: currentBalance,
-      transactionId: fundingResult.transactionId,
-    };
+    try {
+      const fundingResult = await purchaseCreditsWithHbar({
+        baseUrl,
+        apiKey,
+        accountId,
+        hbarAmount,
+        hederaPrivateKey,
+        memo: String(options.memo ?? '').trim(),
+      });
+      const currentBalance = await fetchBalance(baseUrl, apiKey, accountId);
+      funding = {
+        hbarAmount,
+        credited: fundingResult.credited,
+        balanceAfterFunding: currentBalance,
+        transactionId: fundingResult.transactionId,
+      };
+    } catch (error) {
+      fundingError = error instanceof Error ? error.message : String(error);
+    }
   }
 
   return {
@@ -254,6 +243,7 @@ export async function runSetupFlow(options) {
     savedPath,
     balanceBeforeFunding,
     funding,
+    fundingError,
     docs: {
       apiKeys: `${baseUrl.replace(/\/api\/v1$/u, '')}/docs?tab=api-keys`,
       credits: `${baseUrl.replace(/\/api\/v1$/u, '')}/docs?tab=credits`,

@@ -57,14 +57,44 @@ async function askRequired(rl, promptText) {
   }
 }
 
+async function askSecret(rl, promptText) {
+  for (;;) {
+    const output = rl.output;
+    const originalWrite = output.write.bind(output);
+    output.write = (chunk, encoding, callback) => {
+      const text = typeof chunk === 'string' ? chunk : String(chunk);
+      if (text.includes('\n') || text.includes('\r')) {
+        return originalWrite(chunk, encoding, callback);
+      }
+      if (typeof callback === 'function') {
+        callback();
+      }
+      return true;
+    };
+
+    let answer = '';
+    try {
+      answer = normalizeAnswer(await rl.question(promptText));
+    } finally {
+      output.write = originalWrite;
+      process.stdout.write('\n');
+    }
+
+    if (answer) {
+      return answer;
+    }
+    process.stdout.write('This value is required.\n');
+  }
+}
+
 async function collectSetupOptions(rl) {
   const accountId = await askRequired(rl, 'Hedera account ID (e.g. 0.0.12345): ');
   const networkRaw = normalizeAnswer(await rl.question('Network [hedera:testnet]: '));
   const network = networkRaw || 'hedera:testnet';
   const hbarRaw = normalizeAnswer(await rl.question('HBAR top-up amount (optional): '));
-  const hederaPrivateKey = await askRequired(
+  const hederaPrivateKey = await askSecret(
     rl,
-    'Hedera private key for challenge signing (input is visible): ',
+    'Hedera private key for challenge signing (input hidden): ',
   );
 
   const options = {
