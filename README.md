@@ -1,6 +1,6 @@
 # skill-publish
 
-`skill-publish` is the official CLI and GitHub Action for publishing **trustless, immutable, on-chain** skill releases through the Hashgraph Online Registry Broker.
+`skill-publish` is the official CLI and GitHub Action for publishing **trustless, immutable, on-chain** skill releases through the HOL Registry Broker.
 
 Instead of sharing mutable URLs or copy/paste blobs, each `name@version` release is recorded on Hedera (HCS) and exposed via `hcs://...` references. That immutability is the value: the published artifact is tamper-evident, reproducible, and audit-friendly.
 

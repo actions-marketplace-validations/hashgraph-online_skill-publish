@@ -1,7 +1,7 @@
 {
   "name": "skill-publish",
   "version": "1.0.0",
-  "description": "Publish trustless, immutable, on-chain skill releases via the Hashgraph Online Registry Broker.",
+  "description": "Publish trustless, immutable, on-chain skill releases via the HOL Registry Broker.",
   "type": "module",
   "homepage": "https://hol.org/registry/skills/publish",
   "bugs": {
