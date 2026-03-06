@@ -72,5 +72,11 @@
     "smoke:attested-kit": "node bin/cli.mjs attested-kit --help",
     "smoke:apply-kit": "node bin/cli.mjs apply-kit --help",
     "smoke:submit-indexnow": "node bin/cli.mjs submit-indexnow --help"
+  },
+  "pnpm": {
+    "overrides": {
+      "bn.js": "5.2.3",
+      "elliptic": "npm:@soatok/elliptic-to-noble@9999.0.0"
+    }
   }
 }
