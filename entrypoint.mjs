@@ -171,8 +171,8 @@ const summarizeErrorBody = async (response) => {
   }
 };
 
-const sleep = async (delayMs) =>
-  await new Promise((resolve) => {
+const sleep = (delayMs) =>
+  new Promise((resolve) => {
     setTimeout(resolve, delayMs);
   });
 
@@ -261,7 +261,7 @@ const requestJsonWithRetry = async (params) => {
       }
       const delayMs = Math.min(10_000, 1_000 * attempt);
       stderr(
-        `Transient request failure on ${params.method} ${params.url}; retrying in ${delayMs}ms (${attempt}/${attempts - 1} retries used).`,
+        `Transient request failure on ${params.method} ${params.url}; retrying in ${delayMs}ms (retry ${attempt}/${attempts - 1}).`,
       );
       await sleep(delayMs);
     }
