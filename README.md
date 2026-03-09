@@ -12,7 +12,7 @@ Immutability gives you:
 
 A skill package is `SKILL.md` + `skill.json` (plus optional files). The action validates, quotes, publishes, waits for completion, and emits outputs.
 
-By default, `skill-publish` excludes hidden files, env files, lockfiles, build output, local databases, and key/certificate material from package discovery before quote or publish.
+By default, `skill-publish` excludes hidden files and directories, env files, lockfiles, build output, local databases, and key/certificate material from package discovery before quote or publish.
 
 [![npm](https://img.shields.io/npm/v/skill-publish?style=for-the-badge&logo=npm)](https://www.npmjs.com/package/skill-publish)
 [![GitHub Marketplace](https://img.shields.io/badge/GitHub_Marketplace-skill--publish-2EA44F?style=for-the-badge&logo=github)](https://github.com/marketplace/actions/skill-publish)
