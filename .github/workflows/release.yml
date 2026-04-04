@@ -2,8 +2,11 @@ name: Release Assets
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -11,8 +14,97 @@ permissions:
 env:
   HOL_SKILL_PUBLISH_DOCS_URL: https://hol.org/registry/skills/publish
 
+concurrency:
+  group: skill-publish-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  tag-main:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Determine release target
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(node -p "require('./package.json').version")"
+          tag="v${version}"
+
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if gh release view "${tag}" --repo "${GH_REPO}" >/dev/null 2>&1; then
+            echo "release_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create git tag for current package version
+        if: steps.meta.outputs.tag_exists != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git tag "${{ steps.meta.outputs.tag }}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${{ steps.meta.outputs.tag }}"
+
+      - name: Repair GitHub release when tag exists without release
+        if: steps.meta.outputs.tag_exists == 'true' && steps.meta.outputs.release_exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${{ steps.meta.outputs.tag }}"
+          docs_line="- Documentation: ${HOL_SKILL_PUBLISH_DOCS_URL}"
+          notes_file="$(mktemp)"
+          printf '%s\n' "${docs_line}" > "${notes_file}"
+
+          gh release create "${tag}" \
+            --repo "${GH_REPO}" \
+            --title "${tag}" \
+            --generate-notes \
+            --notes-file "${notes_file}" \
+            action.yml \
+            entrypoint.mjs \
+            schemas/skill.schema.json \
+            examples/skill.json \
+            README.md \
+            CITATION.cff \
+            .zenodo.json \
+            apis.json \
+            llms.txt
+
+          rm -f "${notes_file}"
+
+      - name: Skip release repair when release already exists
+        if: steps.meta.outputs.release_exists == 'true'
+        run: echo "Release ${{ steps.meta.outputs.tag }} already exists."
+
   release:
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
