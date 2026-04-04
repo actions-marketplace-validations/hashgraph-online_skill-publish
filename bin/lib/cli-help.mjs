@@ -264,7 +264,10 @@ Options:
   --repo-dir <dir>             Repository directory (or pass [repoDir] positional)
   --skill-dir <dir>            Skill package directory (auto-detected if omitted)
   --workflow-path <path>       Workflow output path (default: .github/workflows/publish-skill.yml)
+  --validate-workflow-path <path>
+                               Validate workflow output path (default: .github/workflows/validate-skill.yml)
   --trigger <mode>             Workflow trigger: release | manual (default: release)
+  --with-validate <bool>       Also add a pull-request validate-only workflow (default: true)
   --annotate <bool>            Enable release/PR annotations (default: true)
   --force                      Overwrite existing workflow file
 `,
@@ -280,7 +283,10 @@ Options:
   --preset <name>              general|api|docs|mcp|assistant|monorepo
   --skill-dir <dir>            Skill package directory (default: skills/<name>)
   --workflow-path <path>       Workflow output path (default: .github/workflows/publish-skill.yml)
+  --validate-workflow-path <path>
+                               Validate workflow output path (default: .github/workflows/validate-skill.yml)
   --trigger <mode>             Workflow trigger: release | manual (default: release)
+  --with-validate <bool>       Also add a pull-request validate-only workflow (default: true)
   --annotate <bool>            Enable release/PR annotations (default: true)
   --force                      Allow scaffolding into a non-empty directory
 `,

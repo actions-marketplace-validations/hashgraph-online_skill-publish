@@ -16,6 +16,7 @@ jobs:
       - name: Publish skill package
         uses: hashgraph-online/skill-publish@v1
         with:
+          mode: publish
           api-key: ${{ secrets.RB_API_KEY }}
           skill-dir: skills/my-skill
           annotate: "true"

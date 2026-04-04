@@ -126,6 +126,7 @@ jobs:
       - name: Publish skill package
         uses: hashgraph-online/skill-publish@v1
         with:
+          mode: publish
           api-key: \${{ secrets.RB_API_KEY }}
           skill-dir: ${skillDir}
           annotate: "${annotate ? 'true' : 'false'}"
@@ -172,6 +173,7 @@ jobs:
       - name: Publish skill package
         uses: hashgraph-online/skill-publish@v1
         with:
+          mode: publish
           api-base-url: \${{ steps.target.outputs.api_base_url }}
           api-key: \${{ secrets.RB_API_KEY }}
           skill-dir: ${skillDir}
@@ -179,6 +181,31 @@ jobs:
           annotate: "${annotate ? 'true' : 'false'}"
           submit-indexnow: "true"
           github-token: \${{ github.token }}
+`;
+}
+
+function buildValidateWorkflow(skillDir, workflowPath) {
+  return `name: Validate Skill
+
+on:
+  pull_request:
+    paths:
+      - '${skillDir}/**'
+      - '${workflowPath}'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate skill package
+        uses: hashgraph-online/skill-publish@v1
+        with:
+          mode: validate
+          skill-dir: ${skillDir}
+          annotate: "false"
 `;
 }
 
@@ -202,6 +229,30 @@ async function writeWorkflow(params) {
   const template = buildWorkflowTemplate(params.skillDir, params.trigger, params.annotate);
   await writeFile(outputPath, `${template}\n`, 'utf8');
   return outputPath;
+}
+
+async function writeValidateWorkflow(params) {
+  const outputPath = path.join(params.repoDir, params.workflowPath);
+  const outputDir = path.dirname(outputPath);
+  const exists = await pathExists(outputPath);
+  if (exists && !params.force) {
+    throw new Error(
+      `Workflow already exists at ${path.relative(process.cwd(), outputPath)}. Use --force to overwrite.`,
+    );
+  }
+  await mkdir(outputDir, { recursive: true });
+  const template = buildValidateWorkflow(params.skillDir, params.workflowPath);
+  await writeFile(outputPath, `${template}\n`, 'utf8');
+  return outputPath;
+}
+
+function ensureDistinctWorkflowPaths(context, workflowPath, validateWorkflowPath, commandName) {
+  if (workflowPath === validateWorkflowPath) {
+    context.fail(
+      'Publish and validate workflows must use different paths. Pass a unique --validate-workflow-path or --workflow-path.',
+      commandName,
+    );
+  }
 }
 
 async function directoryHasContent(dirPath) {
@@ -318,9 +369,16 @@ export async function runSetupActionCommand(options, positionals, context) {
   const requestedSkillDir = normalizeSkillDir(skillDirValue);
 
   const workflowPath = String(options['workflow-path'] ?? '.github/workflows/publish-skill.yml').trim();
+  const validateWorkflowPath = String(
+    options['validate-workflow-path'] ?? '.github/workflows/validate-skill.yml',
+  ).trim();
   const trigger = normalizeTrigger(options.trigger);
   const annotate = normalizeBoolean(options.annotate, true);
+  const withValidate = normalizeBoolean(options['with-validate'], true);
   const force = Boolean(options.force || options.yes);
+  if (withValidate) {
+    ensureDistinctWorkflowPaths(context, workflowPath, validateWorkflowPath, 'setup-action');
+  }
 
   const outputPath = await writeWorkflow({
     repoDir,
@@ -330,11 +388,26 @@ export async function runSetupActionCommand(options, positionals, context) {
     annotate,
     force,
   });
+  const validateOutputPath = withValidate
+    ? await writeValidateWorkflow({
+        repoDir,
+        skillDir: requestedSkillDir,
+        workflowPath: validateWorkflowPath,
+        force,
+      })
+    : null;
 
   process.stdout.write(`${context.colors.green('Configured')} ${context.colors.bold(path.relative(process.cwd(), outputPath))}\n`);
+  if (validateOutputPath) {
+    process.stdout.write(`${context.colors.green('Configured')} ${context.colors.bold(path.relative(process.cwd(), validateOutputPath))}\n`);
+  }
   process.stdout.write(`Trigger: ${trigger}\n`);
   process.stdout.write(`Skill dir: ${requestedSkillDir}\n`);
-  process.stdout.write('Next: add RB_API_KEY to repository secrets, then push and run the workflow.\n');
+  process.stdout.write(
+    withValidate
+      ? 'Next: open a pull request to exercise validate-only CI, then add RB_API_KEY for release publishing.\n'
+      : 'Next: add RB_API_KEY to repository secrets, then push and run the workflow.\n',
+  );
 }
 
 export async function runScaffoldRepoCommand(options, positionals, context) {
@@ -367,7 +440,14 @@ export async function runScaffoldRepoCommand(options, positionals, context) {
   const skillDir = normalizeSkillDir(options['skill-dir'] ?? `skills/${skillName}`);
   const trigger = normalizeTrigger(options.trigger);
   const workflowPath = String(options['workflow-path'] ?? '.github/workflows/publish-skill.yml').trim();
+  const validateWorkflowPath = String(
+    options['validate-workflow-path'] ?? '.github/workflows/validate-skill.yml',
+  ).trim();
   const annotate = normalizeBoolean(options.annotate, true);
+  const withValidate = normalizeBoolean(options['with-validate'], true);
+  if (withValidate) {
+    ensureDistinctWorkflowPaths(context, workflowPath, validateWorkflowPath, 'scaffold-repo');
+  }
 
   const skillJson = await writeSkillPackage({
     repoDir: targetDir,
@@ -386,6 +466,14 @@ export async function runScaffoldRepoCommand(options, positionals, context) {
     annotate,
     force: true,
   });
+  const validateWorkflowOutput = withValidate
+    ? await writeValidateWorkflow({
+        repoDir: targetDir,
+        skillDir,
+        workflowPath: validateWorkflowPath,
+        force: true,
+      })
+    : null;
   await writeRepoReadme(targetDir, skillName, skillDir);
   await writeRepoGitignore(targetDir);
   await writeScaffoldDistribution(targetDir, skillJson);
@@ -396,5 +484,14 @@ export async function runScaffoldRepoCommand(options, positionals, context) {
   }
   process.stdout.write(`Skill package: ${toPosix(path.join(path.relative(process.cwd(), targetDir), skillDir))}\n`);
   process.stdout.write(`Workflow: ${path.relative(process.cwd(), workflowOutput)}\n`);
-  process.stdout.write('Next: `cd` into the repo, add RB_API_KEY in GitHub secrets, then create a release.\n');
+  if (validateWorkflowOutput) {
+    process.stdout.write(
+      `Validate workflow: ${path.relative(process.cwd(), validateWorkflowOutput)}\n`,
+    );
+  }
+  process.stdout.write(
+    withValidate
+      ? 'Next: `cd` into the repo, push a PR to exercise validate-only CI, then add RB_API_KEY in GitHub secrets for release publishing.\n'
+      : 'Next: `cd` into the repo, add RB_API_KEY in GitHub secrets, then create a release.\n',
+  );
 }
