@@ -96,8 +96,9 @@ Examples:
   npx skill-publish doctor ./skills/weather-skill --fix --local-only
   npx skill-publish init ./skills/weather-skill
   npx skill-publish validate ./skills/weather-skill
-  npx skill-publish quote ./skills/weather-skill
-  npx skill-publish publish ./skills/weather-skill
+  npx skill-publish quote --skill-dir ./skills/weather-skill
+  npx skill-publish publish --skill-dir ./skills/weather-skill
+  npx skill-publish --mode validate --skill-dir ./skills/weather-skill
 
 Legacy usage still works:
   RB_API_KEY=rbk_xxx npx skill-publish --skill-dir ./skills/weather-skill
@@ -105,6 +106,7 @@ Legacy usage still works:
 Global flags:
   -h, --help            Show help
   -v, --version         Show CLI version
+  --mode <mode>         Run validate, quote, or publish through the top-level command
   --no-color            Disable ANSI colors
   --non-interactive     Disable interactive prompts
 `;

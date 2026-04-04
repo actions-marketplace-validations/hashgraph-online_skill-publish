@@ -101,8 +101,8 @@ npx skill-publish init ./skills/my-skill
 npx skill-publish doctor ./skills/my-skill
 npx skill-publish doctor ./skills/my-skill --fix --local-only
 npx skill-publish validate ./skills/my-skill
-RB_API_KEY=rbk_xxx npx skill-publish quote ./skills/my-skill
-RB_API_KEY=rbk_xxx npx skill-publish publish ./skills/my-skill
+RB_API_KEY=rbk_xxx npx skill-publish quote --skill-dir ./skills/my-skill
+RB_API_KEY=rbk_xxx npx skill-publish publish --skill-dir ./skills/my-skill
 ```
 
 Repository automation flows:
@@ -175,6 +175,7 @@ After setup, `quote` and `publish` automatically reuse the stored key, so you ca
 
 ```bash
 npx skill-publish doctor ./skills/my-skill
+npx skill-publish validate ./skills/my-skill
 npx skill-publish quote ./skills/my-skill
 npx skill-publish publish ./skills/my-skill
 ```
@@ -186,6 +187,12 @@ RB_API_KEY=rbk_xxx npx skill-publish --skill-dir ./skills/my-skill
 ```
 
 Optional overrides:
+
+```bash
+npx skill-publish \
+  --mode validate \
+  --skill-dir ./skills/my-skill
+```
 
 ```bash
 npx skill-publish \
