@@ -12,6 +12,7 @@ permissions:
   contents: write
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   HOL_SKILL_PUBLISH_DOCS_URL: https://hol.org/registry/skills/publish
 
 concurrency:
@@ -31,7 +32,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Determine release target
         id: meta
@@ -113,7 +114,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Install validation dependencies
         run: npm install --no-save ajv@8 ajv-formats@3
