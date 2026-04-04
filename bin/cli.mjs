@@ -22,6 +22,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const packagePath = path.resolve(__dirname, '..', 'package.json');
 const packageJson = JSON.parse(readFileSync(packagePath, 'utf8'));
+const MODE_FLAGS = new Set(['validate', 'quote', 'publish']);
 
 const OPTION_ENV_MAP = new Map([
   ['api-base-url', 'INPUT_API_BASE_URL'],
@@ -472,6 +473,15 @@ async function run() {
 
   if (options['no-color']) {
     palette = createColors(false);
+  }
+
+  const modeOverride = String(options.mode ?? '').trim().toLowerCase();
+  if (command === 'publish' && modeOverride) {
+    if (!MODE_FLAGS.has(modeOverride)) {
+      fail(`Unsupported mode: ${modeOverride}`, 'publish');
+    }
+    await dispatchCommand(modeOverride, options, positionals);
+    return;
   }
 
   await dispatchCommand(command, options, positionals);
