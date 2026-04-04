@@ -204,6 +204,19 @@ npx skill-publish publish ./skills/my-skill --dry-run
 # with key => quote-only
 ```
 
+GitHub Action modes:
+
+```yaml
+with:
+  mode: validate # no RB_API_KEY required
+```
+
+```yaml
+with:
+  mode: publish
+  api-key: ${{ secrets.RB_API_KEY }}
+```
+
 ## First Publish in Under 5 Minutes
 
 Use this path when you want the full CI/CD setup with GitHub releases and annotations.
@@ -212,7 +225,34 @@ Use this path when you want the full CI/CD setup with GitHub releases and annota
 2. Add credits: https://hol.org/registry/docs?tab=credits
 3. Add `RB_API_KEY` as a GitHub secret.
 4. Commit `SKILL.md` and `skill.json` to your repo.
-5. Add this workflow and publish a release.
+5. Add the validate workflow for pull requests, then add the publish workflow for releases.
+
+Validate on pull requests without secrets:
+
+```yaml
+name: Validate Skill
+
+on:
+  pull_request:
+    paths:
+      - skills/my-skill/**
+      - .github/workflows/validate-skill.yml
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate skill package
+        uses: hashgraph-online/skill-publish@v1
+        with:
+          mode: validate
+          skill-dir: skills/my-skill
+```
+
+Publish immutable releases:
 
 ```yaml
 name: Publish Skill
@@ -232,6 +272,7 @@ jobs:
       - name: Publish skill package
         uses: hashgraph-online/skill-publish@v1
         with:
+          mode: publish
           api-key: ${{ secrets.RB_API_KEY }}
           skill-dir: skills/my-skill
           annotate: "true"

@@ -9,9 +9,13 @@ inputs:
     description: "Registry Broker base URL (either .../registry or .../registry/api/v1)"
     required: false
     default: "https://hol.org/registry/api/v1"
+  mode:
+    description: "Execution mode: validate, quote, or publish"
+    required: false
+    default: "publish"
   api-key:
-    description: "Registry Broker API key"
-    required: true
+    description: "Registry Broker API key (required for quote and publish, optional for validate)"
+    required: false
   account-id:
     description: "Optional Hedera account ID used for publish authorization"
     required: false
@@ -172,6 +176,7 @@ runs:
       shell: bash
       env:
         INPUT_API_BASE_URL: ${{ inputs.api-base-url }}
+        INPUT_MODE: ${{ inputs.mode }}
         INPUT_API_KEY: ${{ inputs.api-key }}
         INPUT_ACCOUNT_ID: ${{ inputs.account-id }}
         INPUT_SKILL_DIR: ${{ inputs.skill-dir }}
