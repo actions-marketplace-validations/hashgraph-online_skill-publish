@@ -53,6 +53,7 @@ const BOOLEAN_OPTIONS = new Set([
   'fix',
   'local-only',
   'publish',
+  'with-validate',
 ]);
 
 const VALUE_OPTIONS = new Set([
@@ -78,6 +79,7 @@ const VALUE_OPTIONS = new Set([
   'store-path',
   'trigger',
   'workflow-path',
+  'validate-workflow-path',
   'repo-dir',
   'readme-path',
   'docs-path',

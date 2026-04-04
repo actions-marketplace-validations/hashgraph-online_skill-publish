@@ -209,6 +209,7 @@ GitHub Action modes:
 ```yaml
 with:
   mode: validate # no RB_API_KEY required
+  annotate: "false"
 ```
 
 ```yaml
@@ -250,6 +251,7 @@ jobs:
         with:
           mode: validate
           skill-dir: skills/my-skill
+          annotate: "false"
 ```
 
 Publish immutable releases:

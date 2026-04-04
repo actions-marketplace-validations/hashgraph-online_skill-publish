@@ -184,14 +184,14 @@ jobs:
 `;
 }
 
-function buildValidateWorkflow(skillDir) {
+function buildValidateWorkflow(skillDir, workflowPath) {
   return `name: Validate Skill
 
 on:
   pull_request:
     paths:
       - '${skillDir}/**'
-      - '.github/workflows/validate-skill.yml'
+      - '${workflowPath}'
 
 jobs:
   validate:
@@ -205,6 +205,7 @@ jobs:
         with:
           mode: validate
           skill-dir: ${skillDir}
+          annotate: "false"
 `;
 }
 
@@ -240,9 +241,18 @@ async function writeValidateWorkflow(params) {
     );
   }
   await mkdir(outputDir, { recursive: true });
-  const template = buildValidateWorkflow(params.skillDir);
+  const template = buildValidateWorkflow(params.skillDir, params.workflowPath);
   await writeFile(outputPath, `${template}\n`, 'utf8');
   return outputPath;
+}
+
+function ensureDistinctWorkflowPaths(context, workflowPath, validateWorkflowPath, commandName) {
+  if (workflowPath === validateWorkflowPath) {
+    context.fail(
+      'Publish and validate workflows must use different paths. Pass a unique --validate-workflow-path or --workflow-path.',
+      commandName,
+    );
+  }
 }
 
 async function directoryHasContent(dirPath) {
@@ -366,6 +376,9 @@ export async function runSetupActionCommand(options, positionals, context) {
   const annotate = normalizeBoolean(options.annotate, true);
   const withValidate = normalizeBoolean(options['with-validate'], true);
   const force = Boolean(options.force || options.yes);
+  if (withValidate) {
+    ensureDistinctWorkflowPaths(context, workflowPath, validateWorkflowPath, 'setup-action');
+  }
 
   const outputPath = await writeWorkflow({
     repoDir,
@@ -432,6 +445,9 @@ export async function runScaffoldRepoCommand(options, positionals, context) {
   ).trim();
   const annotate = normalizeBoolean(options.annotate, true);
   const withValidate = normalizeBoolean(options['with-validate'], true);
+  if (withValidate) {
+    ensureDistinctWorkflowPaths(context, workflowPath, validateWorkflowPath, 'scaffold-repo');
+  }
 
   const skillJson = await writeSkillPackage({
     repoDir: targetDir,
