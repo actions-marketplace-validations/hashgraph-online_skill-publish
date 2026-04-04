@@ -74,7 +74,6 @@ jobs:
 
           tag="${GITHUB_REF_NAME}"
           docs_line="- Documentation: ${HOL_SKILL_PUBLISH_DOCS_URL}"
-          release_notes="$(printf '## Documentation\n%s\n' "${docs_line}")"
           body="$(gh release view "${tag}" --repo "${GH_REPO}" --json body --jq '.body // ""')"
 
           if printf '%s' "${body}" | grep -Fq "${HOL_SKILL_PUBLISH_DOCS_URL}"; then
@@ -85,7 +84,7 @@ jobs:
           notes_file="$(mktemp)"
           {
             printf '%s\n' "${body}"
-            printf '\n%s' "${release_notes}"
+            printf '\n%s\n' "${docs_line}"
           } > "${notes_file}"
           gh release edit "${tag}" --repo "${GH_REPO}" --notes-file "${notes_file}"
           rm -f "${notes_file}"

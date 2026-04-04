@@ -9,6 +9,7 @@ changelog:
     - title: Breaking Changes
       labels:
         - breaking-change
+        - breaking
     - title: Features
       labels:
         - feat
@@ -28,6 +29,9 @@ changelog:
         - chore
         - ci
         - dependencies
+        - refactor
+        - perf
+        - test
     - title: Other Changes
       labels:
         - "*"
