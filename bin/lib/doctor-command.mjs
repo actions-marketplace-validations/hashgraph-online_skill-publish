@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { requestJsonWithTimeout } from './broker-api.mjs';
+import { fetchBalanceDetails, fetchSkillsConfig } from './broker-api.mjs';
 import { loadCredential, resolveCredentialStorePath } from './credential-store.mjs';
 import { repairSkillPackage, readSkillPackageState } from './skill-package.mjs';
 
@@ -94,7 +94,7 @@ async function checkBrokerReachability(baseUrl) {
   let lastError = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      await requestJsonWithTimeout(`${baseUrl}/skills/config`, {}, 12000);
+      await fetchSkillsConfig(baseUrl);
       return;
     } catch (error) {
       lastError = error;
@@ -163,11 +163,7 @@ export async function runDoctorCommand(options, positionals, context) {
     pushCheck(checks, 'pass', 'Credits balance', 'skipped (--local-only)');
   } else if (apiKey && accountId) {
     try {
-      const balanceQuery = new URLSearchParams({ accountId });
-      const response = await requestJsonWithTimeout(`${baseUrl}/credits/balance?${balanceQuery.toString()}`, {
-        'x-api-key': apiKey,
-        'x-account-id': accountId,
-      });
+      const response = await fetchBalanceDetails(baseUrl, apiKey, accountId);
       const balance = Number(response?.balance ?? 0);
       pushCheck(
         checks,

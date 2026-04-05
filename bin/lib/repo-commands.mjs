@@ -5,6 +5,11 @@ import { applyDistributionKit } from './apply-distribution-kit.mjs';
 import { buildDistributionKit } from './distribution-kit.mjs';
 import { buildSkillJson, buildSkillMarkdown, listSkillPresetIds, resolveSkillPreset } from './skill-presets.mjs';
 
+const PINNED_CHECKOUT_ACTION_REF =
+  'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683';
+const PINNED_SKILL_PUBLISH_ACTION_REF =
+  'hashgraph-online/skill-publish@be25745bc45fe05617c033e840661a7f0576be81';
+
 function normalizeName(value) {
   return String(value ?? '')
     .trim()
@@ -122,9 +127,9 @@ jobs:
       pull-requests: write
       issues: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: ${PINNED_CHECKOUT_ACTION_REF}
       - name: Publish skill package
-        uses: hashgraph-online/skill-publish@v1
+        uses: ${PINNED_SKILL_PUBLISH_ACTION_REF}
         with:
           mode: publish
           api-key: \${{ secrets.RB_API_KEY }}
@@ -160,7 +165,7 @@ jobs:
       pull-requests: write
       issues: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: ${PINNED_CHECKOUT_ACTION_REF}
       - name: Resolve broker API URL
         id: target
         shell: bash
@@ -171,7 +176,7 @@ jobs:
             echo "api_base_url=https://hol.org/registry/api/v1" >> "$GITHUB_OUTPUT"
           fi
       - name: Publish skill package
-        uses: hashgraph-online/skill-publish@v1
+        uses: ${PINNED_SKILL_PUBLISH_ACTION_REF}
         with:
           mode: publish
           api-base-url: \${{ steps.target.outputs.api_base_url }}
@@ -185,28 +190,36 @@ jobs:
 }
 
 function buildValidateWorkflow(skillDir, workflowPath) {
+  const skillPaths =
+    skillDir === '.'
+      ? [`      - 'SKILL.md'`, `      - 'skill.json'`]
+      : [`      - '${skillDir}/**'`];
   return `name: Validate Skill
 
 on:
   pull_request:
     paths:
-      - '${skillDir}/**'
+${skillPaths.join('\n')}
+      - '.hol/skill-publish.yml'
       - '${workflowPath}'
 
 jobs:
   validate:
+    concurrency:
+      group: validate-skill-\${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: ${PINNED_CHECKOUT_ACTION_REF}
       - name: Validate skill package
-        uses: hashgraph-online/skill-publish@v1
+        uses: ${PINNED_SKILL_PUBLISH_ACTION_REF}
         with:
           mode: validate
           skill-dir: ${skillDir}
           annotate: "false"
+          preview-upload: "false"
 `;
 }
 
@@ -296,10 +309,11 @@ This repository contains an HCS-26 skill package and CI publishing workflow powe
 
 ## Validate-first flow
 
-1. Open a pull request to run validate-only CI first.
+1. Open a pull request to run fork-safe validate-only CI first.
 2. Update files under \`${skillDir}\` until validation passes.
-3. Add \`RB_API_KEY\` only when you are ready to quote and publish immutable releases.
-4. Create a GitHub release to trigger publish.
+3. Keep preview upload disabled until maintainers explicitly opt in to a trusted repo-owned workflow.
+4. Add \`RB_API_KEY\` only when you are ready to quote and publish immutable releases.
+5. Create a GitHub release to trigger publish.
 `;
 
   await writeFile(readmePath, `${readme}\n`, 'utf8');

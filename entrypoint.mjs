@@ -1,5 +1,15 @@
 import { readFile, stat, appendFile } from 'node:fs/promises';
 import path from 'node:path';
+import {
+  fetchSkillPublishJob,
+  fetchSkillQuotePreview,
+  fetchSkillStatusByRepo,
+  fetchSkillsConfig,
+  listSkillReleases,
+  publishSkill as publishSkillRequest,
+  quoteSkillPublish as quoteSkillPublishRequest,
+  uploadSkillPreviewFromGithubOidc,
+} from './bin/lib/broker-api.mjs';
 import { buildDistributionKit, normalizeApiBaseUrl } from './bin/lib/distribution-kit.mjs';
 import { submitToIndexNow } from './bin/lib/indexnow.mjs';
 import { discoverSkillPackageFiles } from './bin/lib/package-files.mjs';
@@ -65,7 +75,6 @@ const RETRYABLE_ERROR_MARKERS = [
 const INTEGER_VERSION_PATTERN = /^\d+$/;
 const SEMVER_VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.-]+)?$/;
 const SEMVER_PRERELEASE_PATTERN = /^\d+\.\d+\.\d+-[0-9A-Za-z.-]+(?:\+[0-9A-Za-z.-]+)?$/;
-const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 
 const getEnv = (name, fallback = '') => {
   const value = process.env[name];
@@ -172,21 +181,6 @@ const resolveRole = (filePath) => {
   return 'file';
 };
 
-const buildApiUrl = (baseUrl, endpointPath, query = null) => {
-  const sanitizedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-  const normalizedPath = endpointPath.startsWith('/') ? endpointPath : `/${endpointPath}`;
-  const url = new URL(`${sanitizedBase}${normalizedPath}`);
-  if (query) {
-    for (const [key, value] of Object.entries(query)) {
-      if (value === null || value === undefined || value === '') {
-        continue;
-      }
-      url.searchParams.set(key, String(value));
-    }
-  }
-  return url.toString();
-};
-
 const summarizeErrorBody = async (response) => {
   const text = await response.text();
   if (!text) {
@@ -238,85 +232,15 @@ const isRetryableRequestError = (error) => {
   return RETRYABLE_ERROR_MARKERS.some((marker) => message.includes(marker));
 };
 
-const requestJsonWithHeaders = async (params) => {
-  const { method, url, headers = {}, body, signal, timeoutMs } = params;
-  const controller = signal ? null : new AbortController();
-  const activeSignal = signal ?? controller?.signal;
-  const timer = controller
-    ? setTimeout(() => {
-        controller.abort(
-          new Error(`Request timed out after ${timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS}ms`),
-        );
-      }, timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS)
-    : null;
-  let response;
-  try {
-    response = await fetch(url, {
-      method,
-      headers,
-      ...(body ? { body: JSON.stringify(body) } : {}),
-      signal: activeSignal,
-    });
-  } catch (error) {
-    throw new ActionError(
-      `${method} ${url} failed: ${error instanceof Error ? error.message : String(error)}`,
-      {
-        code: extractErrorCode(error),
-      },
-    );
-  } finally {
-    if (timer) {
-      clearTimeout(timer);
-    }
-  }
-  if (!response.ok) {
-    const bodySummary = await summarizeErrorBody(response);
-    throw new ActionError(
-      `${method} ${url} failed with ${response.status}${bodySummary ? `: ${bodySummary}` : ''}`,
-      {
-        statusCode: response.status,
-      },
-    );
-  }
-  return response.json();
-};
-
-const requestJson = async (params) => {
-  const { method, url, apiKey, body, signal, timeoutMs } = params;
-  return requestJsonWithHeaders({
-    method,
-    url,
-    body,
-    signal,
-    timeoutMs,
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': apiKey,
-    },
-  });
-};
-
-const requestBearerJson = async (params) => {
-  const { method, url, token, body, signal, timeoutMs } = params;
-  return requestJsonWithHeaders({
-    method,
-    url,
-    body,
-    signal,
-    timeoutMs,
-    headers: {
-      authorization: `Bearer ${token}`,
-      ...(body ? { 'content-type': 'application/json' } : {}),
-    },
-  });
-};
-
-const requestJsonWithRetry = async (params) => {
-  const attempts = Number.isFinite(params.attempts) && params.attempts > 0 ? Math.floor(params.attempts) : 1;
+const executeWithRetry = async (params) => {
+  const attempts =
+    Number.isFinite(params.attempts) && params.attempts > 0
+      ? Math.floor(params.attempts)
+      : 1;
   let lastError = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return await requestJson(params);
+      return await params.operation();
     } catch (error) {
       lastError = error;
       if (attempt >= attempts || !isRetryableRequestError(error)) {
@@ -324,28 +248,7 @@ const requestJsonWithRetry = async (params) => {
       }
       const delayMs = Math.min(10_000, 1_000 * attempt);
       stderr(
-        `Transient request failure on ${params.method} ${params.url}; retrying in ${delayMs}ms (retry ${attempt}/${attempts - 1}).`,
-      );
-      await sleep(delayMs);
-    }
-  }
-  throw lastError instanceof Error ? lastError : new ActionError('Request failed');
-};
-
-const requestBearerJsonWithRetry = async (params) => {
-  const attempts = Number.isFinite(params.attempts) && params.attempts > 0 ? Math.floor(params.attempts) : 1;
-  let lastError = null;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    try {
-      return await requestBearerJson(params);
-    } catch (error) {
-      lastError = error;
-      if (attempt >= attempts || !isRetryableRequestError(error)) {
-        throw error;
-      }
-      const delayMs = Math.min(10_000, 1_000 * attempt);
-      stderr(
-        `Transient bearer request failure on ${params.method} ${params.url}; retrying in ${delayMs}ms (retry ${attempt}/${attempts - 1}).`,
+        `Transient request failure on ${params.label}; retrying in ${delayMs}ms (retry ${attempt}/${attempts - 1}).`,
       );
       await sleep(delayMs);
     }
@@ -354,16 +257,21 @@ const requestBearerJsonWithRetry = async (params) => {
 };
 
 const findExistingSkillVersion = async (params) => {
-  const { apiBaseUrl, apiKey, name, version } = params;
-  const response = await requestJsonWithRetry({
-    method: 'GET',
-    url: buildApiUrl(apiBaseUrl, '/skills', {
-      name,
-      version,
-      limit: 20,
-    }),
-    apiKey,
+  const { apiBaseUrl, apiKey, accountId, name, version } = params;
+  const response = await executeWithRetry({
+    label: 'GET /skills',
     attempts: 3,
+    operation: () =>
+      listSkillReleases({
+        baseUrl: apiBaseUrl,
+        apiKey,
+        accountId,
+        query: {
+          name,
+          version,
+          limit: 20,
+        },
+      }),
   });
 
   const items = Array.isArray(response?.items) ? response.items : [];
@@ -487,21 +395,11 @@ const uploadPreviewRecord = async (params) => {
     return null;
   }
 
-  const response = await fetch(buildApiUrl(params.apiBaseUrl, '/skills/preview/github-oidc'), {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${oidcToken}`,
-    },
-    body: JSON.stringify(params.report),
+  return uploadSkillPreviewFromGithubOidc({
+    baseUrl: params.apiBaseUrl,
+    token: oidcToken,
+    report: params.report,
   });
-  if (!response.ok) {
-    const details = await summarizeErrorBody(response);
-    throw new ActionError(
-      `Preview upload failed with ${response.status}${details ? `: ${details}` : ''}`,
-    );
-  }
-  return parseJsonResponse(response, 'Preview upload response was not valid JSON');
 };
 
 const tryFetchStatusByRepo = async (params) => {
@@ -509,15 +407,16 @@ const tryFetchStatusByRepo = async (params) => {
     return null;
   }
   try {
-    return await requestJsonWithRetry({
-      method: 'GET',
-      url: buildApiUrl(params.apiBaseUrl, '/skills/status/by-repo', {
-        repo: params.repoUrl,
-        skillDir: params.skillDir,
-        ...(params.ref ? { ref: params.ref } : {}),
-      }),
-      apiKey: '',
+    return await executeWithRetry({
+      label: 'GET /skills/status/by-repo',
       attempts: 1,
+      operation: () =>
+        fetchSkillStatusByRepo({
+          baseUrl: params.apiBaseUrl,
+          repoUrl: params.repoUrl,
+          skillDir: params.skillDir,
+          ...(params.ref ? { ref: params.ref } : {}),
+        }),
     });
   } catch {
     return null;
@@ -536,19 +435,19 @@ const tryFetchQuotePreview = async (params) => {
   }
 
   try {
-    return await requestJsonWithRetry({
-      method: 'POST',
-      url: buildApiUrl(params.apiBaseUrl, '/skills/quote-preview'),
-      apiKey: '',
-      body: {
-        fileCount: params.fileCount,
-        totalBytes: params.totalBytes,
-        ...(params.skillName ? { name: params.skillName } : {}),
-        ...(params.skillVersion ? { version: params.skillVersion } : {}),
-        ...(params.repoUrl ? { repoUrl: params.repoUrl } : {}),
-        ...(params.skillDir ? { skillDir: params.skillDir } : {}),
-      },
+    return await executeWithRetry({
+      label: 'POST /skills/quote-preview',
       attempts: 1,
+      operation: () =>
+        fetchSkillQuotePreview({
+          baseUrl: params.apiBaseUrl,
+          fileCount: params.fileCount,
+          totalBytes: params.totalBytes,
+          ...(params.skillName ? { skillName: params.skillName } : {}),
+          ...(params.skillVersion ? { skillVersion: params.skillVersion } : {}),
+          ...(params.repoUrl ? { repoUrl: params.repoUrl } : {}),
+          ...(params.skillDir ? { skillDir: params.skillDir } : {}),
+        }),
     });
   } catch {
     return null;
@@ -992,6 +891,7 @@ const run = async () => {
     const existingVersion = await findExistingSkillVersion({
       apiBaseUrl,
       apiKey,
+      accountId,
       name: skillName,
       version: skillVersion,
     });
@@ -1085,11 +985,10 @@ const run = async () => {
   let maxTotalSizeBytes = 0;
   let allowedMimeTypes = null;
   if (mode === 'publish' || mode === 'quote') {
-    const config = await requestJsonWithRetry({
-      method: 'GET',
-      url: buildApiUrl(apiBaseUrl, '/skills/config'),
-      apiKey,
+    const config = await executeWithRetry({
+      label: 'GET /skills/config',
       attempts: 3,
+      operation: () => fetchSkillsConfig(apiBaseUrl, apiKey, accountId),
     });
     maxFiles = Number(config?.maxFiles ?? 0);
     maxTotalSizeBytes = Number(config?.maxTotalSizeBytes ?? 0);
@@ -1348,15 +1247,16 @@ const run = async () => {
     return;
   }
 
-  const quote = await requestJsonWithRetry({
-    method: 'POST',
-    url: buildApiUrl(apiBaseUrl, '/skills/quote'),
-    apiKey,
-    body: {
-      files,
-      ...(accountId ? { accountId } : {}),
-    },
+  const quote = await executeWithRetry({
+    label: 'POST /skills/quote',
     attempts: 3,
+    operation: () =>
+      quoteSkillPublishRequest({
+        baseUrl: apiBaseUrl,
+        apiKey,
+        accountId,
+        files,
+      }),
   });
 
   const quoteId = String(quote?.quoteId ?? '').trim();
@@ -1422,15 +1322,12 @@ const run = async () => {
     return;
   }
 
-  const publish = await requestJson({
-    method: 'POST',
-    url: buildApiUrl(apiBaseUrl, '/skills/publish'),
+  const publish = await publishSkillRequest({
+    baseUrl: apiBaseUrl,
     apiKey,
-    body: {
-      files,
-      quoteId,
-      ...(accountId ? { accountId } : {}),
-    },
+    accountId,
+    files,
+    quoteId,
   });
 
   const jobId = String(publish?.jobId ?? '').trim();
@@ -1444,11 +1341,16 @@ const run = async () => {
   let lastStatus = '';
   let completedJob = null;
   while (Date.now() - startedAt < pollTimeoutMs) {
-    const job = await requestJsonWithRetry({
-      method: 'GET',
-      url: buildApiUrl(apiBaseUrl, `/skills/jobs/${encodeURIComponent(jobId)}`, accountId ? { accountId } : null),
-      apiKey,
+    const job = await executeWithRetry({
+      label: `GET /skills/jobs/${jobId}`,
       attempts: 3,
+      operation: () =>
+        fetchSkillPublishJob({
+          baseUrl: apiBaseUrl,
+          apiKey,
+          accountId,
+          jobId,
+        }),
     });
     const status = String(job?.status ?? '').trim();
     if (status && status !== lastStatus) {

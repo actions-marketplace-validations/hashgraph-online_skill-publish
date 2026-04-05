@@ -29,9 +29,11 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
+      pull-requests: write
+      issues: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Resolve broker API URL
         id: target
         shell: bash
@@ -42,7 +44,7 @@ jobs:
             echo "api_base_url=https://hol.org/registry/api/v1" >> "$GITHUB_OUTPUT"
           fi
       - name: Publish skill package
-        uses: hashgraph-online/skill-publish@v1
+        uses: hashgraph-online/skill-publish@be25745bc45fe05617c033e840661a7f0576be81
         with:
           mode: publish
           api-base-url: ${{ steps.target.outputs.api_base_url }}

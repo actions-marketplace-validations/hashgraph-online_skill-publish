@@ -52,13 +52,25 @@ try {
   );
   assert.equal(
     validateWorkflow.includes('id-token: write'),
-    true,
-    'Validate workflow must request OIDC so preview upload works without secrets.',
+    false,
+    'Validate workflow must stay fork-safe by default and avoid OIDC on pull_request.',
   );
   assert.equal(
     validateWorkflow.includes('mode: validate'),
     true,
     'Validate workflow must call skill-publish in validate mode.',
+  );
+  assert.equal(
+    validateWorkflow.includes('preview-upload: "false"'),
+    true,
+    'Validate workflow must disable preview upload by default.',
+  );
+  assert.equal(
+    validateWorkflow.includes(
+      'hashgraph-online/skill-publish@be25745bc45fe05617c033e840661a7f0576be81',
+    ),
+    true,
+    'Validate workflow must pin the skill-publish action to an immutable commit SHA.',
   );
   assert.equal(
     validateWorkflow.includes('api-key:'),
@@ -86,13 +98,39 @@ try {
   );
   assert.equal(
     scaffoldedValidateWorkflow.includes('id-token: write'),
-    true,
-    'Scaffolded validate workflow must request OIDC permissions.',
+    false,
+    'Scaffolded validate workflow must stay fork-safe by default.',
   );
   assert.equal(
-    scaffoldedReadme.includes('Open a pull request to run validate-only CI first.'),
+    scaffoldedValidateWorkflow.includes('preview-upload: "false"'),
+    true,
+    'Scaffolded validate workflow must disable preview upload by default.',
+  );
+  assert.equal(
+    scaffoldedValidateWorkflow.includes(
+      'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683',
+    ),
+    true,
+    'Scaffolded validate workflow must pin checkout to an immutable commit SHA.',
+  );
+  assert.equal(
+    scaffoldedValidateWorkflow.includes(
+      'hashgraph-online/skill-publish@be25745bc45fe05617c033e840661a7f0576be81',
+    ),
+    true,
+    'Scaffolded validate workflow must pin skill-publish to an immutable commit SHA.',
+  );
+  assert.equal(
+    scaffoldedReadme.includes('Open a pull request to run fork-safe validate-only CI first.'),
     true,
     'Scaffolded repo README must direct maintainers through validate-first setup.',
+  );
+  assert.equal(
+    scaffoldedReadme.includes(
+      'Keep preview upload disabled until maintainers explicitly opt in to a trusted repo-owned workflow.',
+    ),
+    true,
+    'Scaffolded repo README must keep preview uploads opt-in instead of enabling OIDC by default.',
   );
   assert.equal(
     scaffoldedReadme.includes('Add `RB_API_KEY` only when you are ready to quote and publish immutable releases.'),
