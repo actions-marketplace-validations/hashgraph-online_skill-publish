@@ -5,6 +5,8 @@ export const COMMAND_ALIASES = new Map([
   ['validate', 'validate'],
   ['check', 'validate'],
   ['v', 'validate'],
+  ['monitor', 'monitor'],
+  ['mon', 'monitor'],
   ['quote', 'quote'],
   ['q', 'quote'],
   ['create', 'create'],
@@ -71,6 +73,7 @@ Getting Started:
 Core Commands:
   init [dir]          Scaffold SKILL.md + skill.json
   validate [dir]      Validate a skill package locally
+  monitor [dir]       Validate and compare current state with broker lifecycle signals
   quote [dir]         Validate package and fetch an authenticated publish quote
   publish [dir]       Validate, quote, and publish a credit-funded skill release
   help [command]      Show help for a command
@@ -96,6 +99,7 @@ Examples:
   npx skill-publish doctor ./skills/weather-skill --fix --local-only
   npx skill-publish init ./skills/weather-skill
   npx skill-publish validate ./skills/weather-skill
+  npx skill-publish monitor ./skills/weather-skill
   npx skill-publish quote --skill-dir ./skills/weather-skill
   npx skill-publish publish --skill-dir ./skills/weather-skill
   npx skill-publish --mode validate --skill-dir ./skills/weather-skill
@@ -106,7 +110,7 @@ Legacy usage still works:
 Global flags:
   -h, --help            Show help
   -v, --version         Show CLI version
-  --mode <mode>         Run validate, quote, or publish through the top-level command
+  --mode <mode>         Run validate, monitor, quote, or publish through the top-level command
   --no-color            Disable ANSI colors
   --non-interactive     Disable interactive prompts
 `;
@@ -149,6 +153,18 @@ Options:
   --skill-dir <dir>            Skill directory; [dir] positional also supported
   --name <name>                Override name from skill.json
   --version <version>          Override version from skill.json
+  --json                       Print machine-readable summary
+`,
+  monitor: `skill-publish monitor [dir]
+
+Validates the package, compares the current repo state with broker lifecycle signals, and emits low-noise publish readiness outputs without publishing.
+
+Options:
+  --api-base-url <url>         API base URL (default: https://hol.org/registry/api/v1)
+  --skill-dir <dir>            Skill directory; [dir] positional also supported
+  --name <name>                Override name from skill.json
+  --version <version>          Override version from skill.json
+  --quote-preview <bool>       Request anonymous publish cost estimate when available
   --json                       Print machine-readable summary
 `,
   quote: `skill-publish quote [dir]

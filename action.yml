@@ -10,7 +10,7 @@ inputs:
     required: false
     default: "https://hol.org/registry/api/v1"
   mode:
-    description: "Execution mode: validate, quote, or publish"
+    description: "Execution mode: validate, monitor, quote, or publish"
     required: false
     default: "publish"
   api-key:
@@ -48,10 +48,6 @@ inputs:
     description: "When true, posts results to release notes or merged PR"
     required: false
     default: "true"
-  preview-upload:
-    description: "When true, validate mode uploads preview state through GitHub OIDC when available"
-    required: false
-    default: "true"
   submit-indexnow:
     description: "When true, submits canonical skill URLs to IndexNow after publish or skip-existing"
     required: false
@@ -59,7 +55,63 @@ inputs:
   github-token:
     description: "GitHub token used for release or PR annotations"
     required: false
+  preview-upload:
+    description: "When true, uploads validate or monitor previews through GitHub OIDC when available"
+    required: false
+    default: "true"
+  comment-mode:
+    description: "Managed comment behavior: off, failures-only, state-changes, or always"
+    required: false
+    default: "state-changes"
+  comment-on-success:
+    description: "When true, allows managed comments on successful state changes"
+    required: false
+    default: "true"
+  quote-preview:
+    description: "When true, requests an estimated publish cost preview when the skill is publish-ready"
+    required: false
+    default: "false"
+  conversion-hint-level:
+    description: "Conversion hint verbosity: off, soft, or detailed"
+    required: false
+    default: "soft"
+  group-key:
+    description: "Optional grouping key for multi-skill monitor summaries"
+    required: false
 outputs:
+  preview-json:
+    description: "Validate or monitor preview artifact JSON payload"
+    value: ${{ steps.publish.outputs.preview-json }}
+  preview-json-path:
+    description: "Path to the local preview artifact JSON file written during validate or monitor"
+    value: ${{ steps.publish.outputs.preview-json-path }}
+  status-url:
+    description: "Lifecycle status page URL when a preview or publish status page exists"
+    value: ${{ steps.publish.outputs.status-url }}
+  trust-tier:
+    description: "Lifecycle trust tier for the current skill state"
+    value: ${{ steps.publish.outputs.trust-tier }}
+  publish-readiness:
+    description: "Publish readiness summary for validate or monitor runs"
+    value: ${{ steps.publish.outputs.publish-readiness }}
+  missing-requirements:
+    description: "JSON array describing missing publish or trust requirements"
+    value: ${{ steps.publish.outputs.missing-requirements }}
+  estimated-credits-range:
+    description: "Estimated publish credit range when quote preview is available"
+    value: ${{ steps.publish.outputs.estimated-credits-range }}
+  managed-comment-url:
+    description: "Managed GitHub comment URL when the action updates a PR or issue comment"
+    value: ${{ steps.publish.outputs.managed-comment-url }}
+  purchase-url:
+    description: "Deep link to purchase or top up credits for publish"
+    value: ${{ steps.publish.outputs.purchase-url }}
+  publish-url:
+    description: "Deep link to publish or setup a publish flow"
+    value: ${{ steps.publish.outputs.publish-url }}
+  verification-url:
+    description: "Deep link to verification or trust-upgrade guidance"
+    value: ${{ steps.publish.outputs.verification-url }}
   published:
     description: "Whether a publish operation executed (false when skipped because version already exists)"
     value: ${{ steps.publish.outputs.published }}
@@ -72,15 +124,6 @@ outputs:
   skill-version:
     description: "Published skill version"
     value: ${{ steps.publish.outputs.skill-version }}
-  preview-json:
-    description: "Validate-mode preview JSON payload"
-    value: ${{ steps.publish.outputs.preview-json }}
-  preview-json-path:
-    description: "Validate-mode preview JSON file path"
-    value: ${{ steps.publish.outputs.preview-json-path }}
-  status-url:
-    description: "Lifecycle status URL for validate or publish mode"
-    value: ${{ steps.publish.outputs.status-url }}
   quote-id:
     description: "Quote identifier used for publish"
     value: ${{ steps.publish.outputs.quote-id }}
@@ -203,4 +246,10 @@ runs:
         INPUT_PREVIEW_UPLOAD: ${{ inputs.preview-upload }}
         INPUT_SUBMIT_INDEXNOW: ${{ inputs.submit-indexnow }}
         INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_PREVIEW_UPLOAD: ${{ inputs.preview-upload }}
+        INPUT_COMMENT_MODE: ${{ inputs.comment-mode }}
+        INPUT_COMMENT_ON_SUCCESS: ${{ inputs.comment-on-success }}
+        INPUT_QUOTE_PREVIEW: ${{ inputs.quote-preview }}
+        INPUT_CONVERSION_HINT_LEVEL: ${{ inputs.conversion-hint-level }}
+        INPUT_GROUP_KEY: ${{ inputs.group-key }}
       run: node "${{ github.action_path }}/entrypoint.mjs"

@@ -4,23 +4,58 @@ import path from 'node:path';
 
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const readme = await readFile(path.join(repoRoot, 'README.md'), 'utf8');
+const actionManifest = await readFile(path.join(repoRoot, 'action.yml'), 'utf8');
 
-const validateHeading = '### GitHub Action (validate-first quickstart)';
-const publishHeading = '### GitHub Action (release publishing)';
+const validateWorkflowIndex = readme.indexOf('name: Validate Skill');
+const publishWorkflowIndex = readme.indexOf('name: Publish Skill');
 
+assert.notEqual(validateWorkflowIndex, -1, 'README must include the validate workflow example');
+assert.notEqual(publishWorkflowIndex, -1, 'README must include the publish workflow example');
+assert.ok(
+  validateWorkflowIndex < publishWorkflowIndex,
+  'README must present the validate workflow example before the publish workflow example',
+);
+
+const quickStartIndex = readme.indexOf('## Quick Start');
+const quickStartValidateIndex = readme.indexOf('mode: validate', quickStartIndex);
+const quickStartPublishIndex = readme.indexOf('api-key: ${{ secrets.RB_API_KEY }}', quickStartIndex);
+
+assert.notEqual(quickStartValidateIndex, -1, 'Quick Start must mention validate mode');
+assert.notEqual(quickStartPublishIndex, -1, 'Quick Start must mention publish credentials');
+assert.ok(
+  quickStartValidateIndex < quickStartPublishIndex,
+  'Quick Start must lead with validate-first guidance before publish credentials',
+);
+
+assert.match(
+  actionManifest,
+  /mode:\n\s+description:\s+"Execution mode: validate, monitor, quote, or publish"/u,
+  'action.yml must expose the public mode input',
+);
+assert.match(
+  actionManifest,
+  /api-key:\n\s+description:\s+"Registry Broker API key \(required for quote and publish, optional for validate\)"/u,
+  'action.yml must keep api-key optional globally so validate remains secretless',
+);
+assert.match(
+  actionManifest,
+  /preview-json:\n\s+description:\s+"Validate or monitor preview artifact JSON payload"/u,
+  'action.yml must expose the preview-json output',
+);
+assert.match(
+  actionManifest,
+  /status-url:\n\s+description:\s+"Lifecycle status page URL when a preview or publish status page exists"/u,
+  'action.yml must expose the status-url output',
+);
 assert.equal(
-  readme.includes(validateHeading),
+  readme.includes('### GitHub Action (validate-first quickstart)'),
   true,
   'README must document validate-first GitHub setup explicitly.',
 );
 assert.equal(
-  readme.includes(publishHeading),
+  readme.includes('### GitHub Action (release publishing)'),
   true,
   'README must keep the publish workflow documented separately.',
-);
-assert.ok(
-  readme.indexOf(validateHeading) < readme.indexOf(publishHeading),
-  'README should present validate-first setup before publish workflow setup.',
 );
 assert.equal(
   readme.includes('Publishing immutable releases still consumes HOL Registry Broker credits.'),
@@ -28,4 +63,4 @@ assert.equal(
   'README must state that publish remains credit-gated.',
 );
 
-process.stdout.write('readme-contract test passed\n');
+process.stdout.write('readme/action contract test passed\n');

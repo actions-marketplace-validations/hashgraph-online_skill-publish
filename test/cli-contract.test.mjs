@@ -1,41 +1,124 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { cp, copyFile, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { promisify } from 'node:util';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const cliPath = path.resolve(__dirname, '..', 'bin', 'cli.mjs');
+const execFileAsync = promisify(execFile);
+const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const fixtureSkillDir = path.join(repoRoot, 'test', 'fixtures', 'valid-skill');
+const cliSourcePath = path.join(repoRoot, 'bin', 'cli.mjs');
+const cliLibPath = path.join(repoRoot, 'bin', 'lib');
 
-function runCli(args) {
-  return spawnSync(process.execPath, [cliPath, ...args], {
-    cwd: path.resolve(__dirname, '..'),
-    encoding: 'utf8',
-  });
+async function createCliRuntime() {
+  const runtimeRoot = await mkdtemp(path.join(repoRoot, 'test-runtime-cli-'));
+  await mkdir(path.join(runtimeRoot, 'bin'), { recursive: true });
+  await copyFile(cliSourcePath, path.join(runtimeRoot, 'bin', 'cli.mjs'));
+  await cp(cliLibPath, path.join(runtimeRoot, 'bin', 'lib'), { recursive: true });
+  await writeFile(
+    path.join(runtimeRoot, 'entrypoint.mjs'),
+    [
+      "process.stdout.write(JSON.stringify({",
+      "  mode: process.env.INPUT_MODE ?? null,",
+      "  apiKey: process.env.INPUT_API_KEY ?? null,",
+      "  skillDir: process.env.INPUT_SKILL_DIR ?? null,",
+      "}) + '\\n');",
+    ].join('\n'),
+    'utf8',
+  );
+  await writeFile(
+    path.join(runtimeRoot, 'package.json'),
+    JSON.stringify({ version: '9.9.9-test' }, null, 2),
+    'utf8',
+  );
+  return runtimeRoot;
 }
 
-const validateModeResult = runCli(['--mode', 'validate', '--skill-dir', '.']);
-assert.notEqual(validateModeResult.status, 0);
-assert.equal(
-  validateModeResult.stderr.includes('Missing API key'),
-  false,
-  `expected --mode validate to avoid API key gating, got: ${validateModeResult.stderr}`,
+async function runCli(args, options = {}) {
+  const runtimeRoot = await createCliRuntime();
+  try {
+    const result = await execFileAsync('node', ['bin/cli.mjs', ...args], {
+      cwd: runtimeRoot,
+      env: {
+        ...process.env,
+        INPUT_PREVIEW_UPLOAD: 'false',
+        INPUT_ANNOTATE: 'false',
+        ...options.env,
+      },
+    });
+    return {
+      ...result,
+      code: 0,
+      runtimeRoot,
+    };
+  } catch (error) {
+    return {
+      stdout: error.stdout ?? '',
+      stderr: error.stderr ?? '',
+      code: error.code ?? 1,
+      error,
+      runtimeRoot,
+    };
+  }
+}
+
+const validateCommand = await runCli(['validate', '--skill-dir', fixtureSkillDir], {
+  env: {
+    INPUT_API_BASE_URL: 'https://hol.org/registry/api/v1',
+  },
+});
+assert.equal(validateCommand.code, 0, validateCommand.stderr || validateCommand.error?.message);
+assert.deepEqual(JSON.parse(validateCommand.stdout.trim()), {
+  mode: 'validate',
+  apiKey: null,
+  skillDir: fixtureSkillDir,
+});
+
+const validateFlag = await runCli(['--mode', 'validate', '--skill-dir', fixtureSkillDir], {
+  env: {
+    INPUT_API_BASE_URL: 'https://hol.org/registry/api/v1',
+  },
+});
+assert.equal(validateFlag.code, 0, validateFlag.stderr || validateFlag.error?.message);
+assert.deepEqual(JSON.parse(validateFlag.stdout.trim()), {
+  mode: 'validate',
+  apiKey: null,
+  skillDir: fixtureSkillDir,
+});
+
+const monitorFlag = await runCli(['--mode', 'monitor', '--skill-dir', fixtureSkillDir], {
+  env: {
+    INPUT_API_BASE_URL: 'https://hol.org/registry/api/v1',
+  },
+});
+assert.equal(monitorFlag.code, 0, monitorFlag.stderr || monitorFlag.error?.message);
+assert.deepEqual(JSON.parse(monitorFlag.stdout.trim()), {
+  mode: 'monitor',
+  apiKey: null,
+  skillDir: fixtureSkillDir,
+});
+
+const quoteWithoutKey = await runCli(['quote', '--skill-dir', fixtureSkillDir]);
+assert.notEqual(quoteWithoutKey.code, 0);
+assert.match(
+  `${quoteWithoutKey.stderr}${quoteWithoutKey.stdout}`,
+  /Missing API key/u,
 );
 
-const quoteModeResult = runCli(['--mode', 'quote', '--skill-dir', '.']);
-assert.notEqual(quoteModeResult.status, 0);
-assert.equal(
-  quoteModeResult.stderr.includes('Missing API key'),
-  true,
-  `expected --mode quote to require API key, got: ${quoteModeResult.stderr}`,
+const helpResult = await runCli(['--help']);
+assert.equal(helpResult.code, 0, helpResult.stderr || helpResult.error?.message);
+assert.match(helpResult.stdout, /monitor \[dir\]/u);
+assert.match(helpResult.stdout, /validate \[dir\]/u);
+assert.match(helpResult.stdout, /publish \[dir\]/u);
+
+await Promise.all(
+  [
+    validateCommand.runtimeRoot,
+    validateFlag.runtimeRoot,
+    monitorFlag.runtimeRoot,
+    quoteWithoutKey.runtimeRoot,
+    helpResult.runtimeRoot,
+  ].map((runtimeRoot) => rm(runtimeRoot, { recursive: true, force: true })),
 );
 
-const helpResult = runCli(['--help']);
-assert.equal(helpResult.status, 0);
-assert.equal(
-  helpResult.stdout.includes('--mode <mode>'),
-  true,
-  `expected global help to document --mode, got: ${helpResult.stdout}`,
-);
-
-process.stdout.write('cli-contract test passed\n');
+process.stdout.write('cli contract test passed\n');

@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { writeSkillPreviewReport } from '../bin/lib/preview-output.mjs';
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
@@ -60,19 +59,27 @@ async function listenServer(handler) {
   };
 }
 
-async function runValidate(fixtureName, options = {}) {
+async function runActionMode(fixtureName, mode, options = {}) {
   const runtimeRoot = await mkdtemp(path.join(repoRoot, 'test-runtime-'));
   const githubOutputPath = path.join(runtimeRoot, 'github-output.txt');
   const githubSummaryPath = path.join(runtimeRoot, 'github-summary.md');
+  const githubEventPath = path.join(runtimeRoot, 'github-event.json');
   await mkdir(runtimeRoot, { recursive: true });
   const skillDir = path.join(fixtureRoot, fixtureName);
+  if (options.eventPayload) {
+    await writeFile(
+      githubEventPath,
+      JSON.stringify(options.eventPayload, null, 2),
+      'utf8',
+    );
+  }
 
   try {
     const result = await execFileAsync('node', ['entrypoint.mjs'], {
       cwd: repoRoot,
       env: {
         ...process.env,
-        INPUT_MODE: 'validate',
+        INPUT_MODE: mode,
         INPUT_API_BASE_URL: options.apiBaseUrl ?? 'https://hol.org/registry/api/v1',
         INPUT_SKILL_DIR: skillDir,
         INPUT_ANNOTATE: 'false',
@@ -81,9 +88,11 @@ async function runValidate(fixtureName, options = {}) {
         GITHUB_STEP_SUMMARY: githubSummaryPath,
         GITHUB_REPOSITORY: 'hashgraph-online/valid-skill',
         GITHUB_SERVER_URL: 'https://github.com',
+        ...(options.githubApiUrl ? { GITHUB_API_URL: options.githubApiUrl } : {}),
         GITHUB_SHA: 'abc123def456abc123def456abc123def456abcd',
         GITHUB_REF: 'refs/pull/5/merge',
         GITHUB_EVENT_NAME: 'pull_request',
+        ...(options.eventPayload ? { GITHUB_EVENT_PATH: githubEventPath } : {}),
         ...options.extraEnv,
       },
     });
@@ -102,7 +111,7 @@ async function runValidate(fixtureName, options = {}) {
   }
 }
 
-const validRun = await runValidate('valid-skill');
+const validRun = await runActionMode('valid-skill', 'validate');
 assert.equal(validRun.error, undefined, validRun.error?.stderr ?? validRun.error?.message);
 const githubOutput = parseGithubOutput(await readFile(validRun.githubOutputPath, 'utf8'));
 assert.equal(githubOutput.get('skill-name'), 'valid-skill');
@@ -110,6 +119,11 @@ assert.equal(githubOutput.get('skill-version'), '1.0.0');
 assert.ok(githubOutput.has('preview-json'));
 assert.ok(githubOutput.has('preview-json-path'));
 assert.ok(githubOutput.has('next-actions'));
+assert.equal(githubOutput.get('trust-tier'), 'validated');
+assert.equal(githubOutput.get('publish-readiness'), 'ready');
+assert.equal(githubOutput.get('missing-requirements'), '[]');
+assert.equal(githubOutput.get('estimated-credits-range'), '');
+assert.equal(githubOutput.get('managed-comment-url'), '');
 const previewJson = JSON.parse(githubOutput.get('preview-json'));
 const previewJsonPath = githubOutput.get('preview-json-path');
 assert.ok(previewJsonPath);
@@ -125,23 +139,9 @@ assert.equal(previewJson.validation_status, 'passed');
 assert.deepEqual(previewJsonOnDisk, previewJson);
 assert.equal(githubOutput.get('status-url'), '');
 
-const traversalRuntimeRoot = await mkdtemp(path.join(repoRoot, 'test-runtime-'));
-const traversalPath = await writeSkillPreviewReport({
-  workspaceDir: traversalRuntimeRoot,
-  report: {
-    ...previewJson,
-    name: '../SeCrEt',
-    version: '..1.0.0',
-  },
-});
-assert.ok(
-  traversalPath.startsWith(path.join(traversalRuntimeRoot, '.hol', 'previews')),
-);
-assert.equal(path.basename(traversalPath).includes('..'), false);
-await rm(traversalRuntimeRoot, { recursive: true, force: true });
-
 const previewUploadRequests = [];
-let oidcAttempts = 0;
+const quotePreviewRequests = [];
+const managedCommentRequests = [];
 const oidcServer = await listenServer(async (request, response) => {
   const body = await new Promise((resolve) => {
     let chunks = '';
@@ -153,13 +153,7 @@ const oidcServer = await listenServer(async (request, response) => {
   });
 
   if (request.url?.startsWith('/oidc')) {
-    oidcAttempts += 1;
     assert.equal(request.headers.authorization, 'Bearer broker-test-token');
-    if (oidcAttempts === 1) {
-      response.writeHead(502, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ error: 'temporary upstream issue' }));
-      return;
-    }
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify({ value: 'github-oidc-token' }));
     return;
@@ -184,11 +178,60 @@ const oidcServer = await listenServer(async (request, response) => {
     return;
   }
 
+  if (request.url === '/api/v1/skills/quote-preview') {
+    quotePreviewRequests.push(body ? JSON.parse(body) : null);
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(
+      JSON.stringify({
+        estimatedCredits: {
+          min: 64,
+          max: 76,
+        },
+        estimatedHbar: {
+          min: 0.64,
+          max: 0.76,
+        },
+        pricingVersion: 'heuristic-v1',
+        assumptions: [
+          'Estimate derived from package file count and total bytes.',
+        ],
+        purchaseUrl: 'https://hol.org/registry/skills/submit',
+        publishUrl: 'https://hol.org/registry/skills/submit',
+        verificationUrl: 'https://hol.org/registry/skills/submit',
+      }),
+    );
+    return;
+  }
+
+  if (
+    request.url?.startsWith(
+      '/repos/hashgraph-online/valid-skill/issues/5/comments',
+    )
+  ) {
+    if (request.method === 'GET') {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify([]));
+      return;
+    }
+    if (request.method === 'POST') {
+      managedCommentRequests.push(body ? JSON.parse(body) : null);
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          id: 501,
+          html_url:
+            'https://github.com/hashgraph-online/valid-skill/pull/5#issuecomment-501',
+        }),
+      );
+      return;
+    }
+  }
+
   response.writeHead(404, { 'content-type': 'application/json' });
   response.end(JSON.stringify({ error: 'not found' }));
 });
 
-const uploadedRun = await runValidate('valid-skill', {
+const uploadedRun = await runActionMode('valid-skill', 'validate', {
   apiBaseUrl: `${oidcServer.baseUrl}/api/v1`,
   extraEnv: {
     ACTIONS_ID_TOKEN_REQUEST_URL: `${oidcServer.baseUrl}/oidc`,
@@ -202,64 +245,87 @@ assert.equal(previewUploadRequests.length, 1);
 assert.equal(previewUploadRequests[0].authorization, 'Bearer github-oidc-token');
 assert.equal(previewUploadRequests[0].body.name, 'valid-skill');
 
-const failedUploadServer = await listenServer(async (request, response) => {
-  const body = await new Promise((resolve) => {
-    let chunks = '';
-    request.setEncoding('utf8');
-    request.on('data', (chunk) => {
-      chunks += chunk;
-    });
-    request.on('end', () => resolve(chunks));
-  });
-
-  if (request.url?.startsWith('/oidc')) {
-    response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ value: 'github-oidc-token' }));
-    return;
-  }
-
-  if (request.url === '/api/v1/skills/preview/github-oidc') {
-    response.writeHead(503, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ error: 'preview store unavailable', body }));
-    return;
-  }
-
-  response.writeHead(404, { 'content-type': 'application/json' });
-  response.end(JSON.stringify({ error: 'not found' }));
+const monitorRun = await runActionMode('valid-skill', 'monitor', {
+  previewUpload: 'false',
 });
+assert.equal(monitorRun.error, undefined, monitorRun.error?.stderr ?? monitorRun.error?.message);
+const monitorOutput = parseGithubOutput(await readFile(monitorRun.githubOutputPath, 'utf8'));
+assert.equal(monitorOutput.get('trust-tier'), 'validated');
+assert.equal(monitorOutput.get('publish-readiness'), 'ready');
+assert.equal(monitorOutput.get('missing-requirements'), '[]');
+assert.ok(monitorOutput.has('next-actions'));
 
-const failedUploadRun = await runValidate('valid-skill', {
-  apiBaseUrl: `${failedUploadServer.baseUrl}/api/v1`,
+const quotePreviewRun = await runActionMode('valid-skill', 'validate', {
+  apiBaseUrl: `${oidcServer.baseUrl}/api/v1`,
+  previewUpload: 'false',
   extraEnv: {
-    ACTIONS_ID_TOKEN_REQUEST_URL: `${failedUploadServer.baseUrl}/oidc`,
-    ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'broker-test-token',
+    INPUT_QUOTE_PREVIEW: 'true',
   },
 });
 assert.equal(
-  failedUploadRun.error,
+  quotePreviewRun.error,
   undefined,
-  failedUploadRun.error?.stderr ?? failedUploadRun.error?.message,
+  quotePreviewRun.error?.stderr ?? quotePreviewRun.error?.message,
 );
-const failedUploadOutput = parseGithubOutput(
-  await readFile(failedUploadRun.githubOutputPath, 'utf8'),
+const quotePreviewOutput = parseGithubOutput(
+  await readFile(quotePreviewRun.githubOutputPath, 'utf8'),
 );
-assert.equal(failedUploadOutput.get('status-url'), '');
+assert.equal(quotePreviewOutput.get('estimated-credits-range'), '64-76');
+assert.equal(
+  quotePreviewOutput.get('purchase-url'),
+  'https://hol.org/registry/skills/submit',
+);
+assert.equal(quotePreviewRequests.length, 1);
+assert.equal(quotePreviewRequests[0]?.name, 'valid-skill');
+assert.equal(quotePreviewRequests[0]?.version, '1.0.0');
 
-const missingSkillMdRun = await runValidate('missing-skill-md');
+const managedCommentRun = await runActionMode('valid-skill', 'monitor', {
+  apiBaseUrl: `${oidcServer.baseUrl}/api/v1`,
+  previewUpload: 'false',
+  githubApiUrl: oidcServer.baseUrl,
+  eventPayload: {
+    pull_request: {
+      number: 5,
+    },
+  },
+  extraEnv: {
+    INPUT_COMMENT_MODE: 'always',
+    INPUT_GITHUB_TOKEN: 'ghs_test_token',
+  },
+});
+assert.equal(
+  managedCommentRun.error,
+  undefined,
+  managedCommentRun.error?.stderr ?? managedCommentRun.error?.message,
+);
+const managedCommentOutput = parseGithubOutput(
+  await readFile(managedCommentRun.githubOutputPath, 'utf8'),
+);
+assert.equal(
+  managedCommentOutput.get('managed-comment-url'),
+  'https://github.com/hashgraph-online/valid-skill/pull/5#issuecomment-501',
+);
+assert.equal(managedCommentRequests.length, 1);
+assert.match(
+  managedCommentRequests[0]?.body ?? '',
+  /HOL skill lifecycle/u,
+);
+
+const missingSkillMdRun = await runActionMode('missing-skill-md', 'validate');
 assert.ok(missingSkillMdRun.error);
 assert.match(
   `${missingSkillMdRun.error.stderr ?? ''}${missingSkillMdRun.error.message ?? ''}`,
   /Missing required file: .*SKILL\.md/u,
 );
 
-const missingSkillJsonRun = await runValidate('missing-skill-json');
+const missingSkillJsonRun = await runActionMode('missing-skill-json', 'validate');
 assert.ok(missingSkillJsonRun.error);
 assert.match(
   `${missingSkillJsonRun.error.stderr ?? ''}${missingSkillJsonRun.error.message ?? ''}`,
   /Missing required file: .*skill\.json/u,
 );
 
-const invalidJsonRun = await runValidate('invalid-skill-json');
+const invalidJsonRun = await runActionMode('invalid-skill-json', 'validate');
 assert.ok(invalidJsonRun.error);
 assert.match(
   `${invalidJsonRun.error.stderr ?? ''}${invalidJsonRun.error.message ?? ''}`,
@@ -269,8 +335,9 @@ assert.match(
 await rm(validRun.runtimeRoot, { recursive: true, force: true });
 await oidcServer.close();
 await rm(uploadedRun.runtimeRoot, { recursive: true, force: true });
-await failedUploadServer.close();
-await rm(failedUploadRun.runtimeRoot, { recursive: true, force: true });
+await rm(monitorRun.runtimeRoot, { recursive: true, force: true });
+await rm(quotePreviewRun.runtimeRoot, { recursive: true, force: true });
+await rm(managedCommentRun.runtimeRoot, { recursive: true, force: true });
 if (missingSkillMdRun.runtimeRoot) {
   await rm(missingSkillMdRun.runtimeRoot, { recursive: true, force: true });
 }

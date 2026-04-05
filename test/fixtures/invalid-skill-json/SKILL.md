@@ -1,3 +1,3 @@
 # Invalid Skill JSON
 
-This fixture contains invalid JSON.
+This fixture contains malformed JSON on purpose.

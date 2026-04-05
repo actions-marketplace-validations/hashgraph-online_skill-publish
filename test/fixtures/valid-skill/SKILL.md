@@ -1,3 +1,3 @@
 # Valid Skill
 
-This is a valid skill fixture.
+Use this skill to test validate-first preview generation.
