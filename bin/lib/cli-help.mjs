@@ -276,7 +276,7 @@ Options:
 `,
   'setup-action': `skill-publish setup-action [repoDir]
 
-Adds a skill-publish GitHub Actions workflow to an existing skill repository.
+Adds a skill-publish GitHub Actions workflow to an existing skill repository. The generated validate workflow is fork-safe by default and keeps preview upload disabled until maintainers opt in.
 
 Options:
   --repo-dir <dir>             Repository directory (or pass [repoDir] positional)
@@ -291,7 +291,7 @@ Options:
 `,
   'scaffold-repo': `skill-publish scaffold-repo [repoDir]
 
-Scaffolds a new skill repository with package files and publish workflow.
+Scaffolds a new skill repository with package files and publish workflow. The generated validate workflow is fork-safe by default and keeps preview upload disabled until maintainers opt in.
 
 Options:
   --repo-dir <dir>             Repository directory (or pass [repoDir] positional)

@@ -26,7 +26,7 @@ Choose the path that matches how you work:
 
 ### GitHub Action (validate-first quickstart)
 
-Start with a validate-only pull request workflow. This does not require `RB_API_KEY`, and it uploads preview status through GitHub OIDC when the repo grants `id-token: write`.
+Start with a validate-only pull request workflow. This does not require `RB_API_KEY`, does not request `id-token: write`, and keeps the first rollout fork-safe by disabling preview upload until maintainers explicitly opt in.
 
 ```yaml
 name: Validate Skill
@@ -34,23 +34,29 @@ on:
   pull_request:
     paths:
       - skills/my-skill/**
+      - .hol/skill-publish.yml
       - .github/workflows/validate-skill.yml
 
 jobs:
   validate:
+    concurrency:
+      group: validate-skill-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Validate skill package
-        uses: hashgraph-online/skill-publish@v1
+        uses: hashgraph-online/skill-publish@be25745bc45fe05617c033e840661a7f0576be81
         with:
           mode: validate
           skill-dir: skills/my-skill
           annotate: "false"
+          preview-upload: "false"
 ```
+
+If you want preview uploads later, enable them only in a trusted repo-owned workflow such as `workflow_dispatch` or a protected-branch `push`, then add `id-token: write` and `preview-upload: "true"` there.
 
 ### GitHub Action (release publishing)
 
@@ -70,9 +76,9 @@ jobs:
       pull-requests: write
       issues: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Publish skill package
-        uses: hashgraph-online/skill-publish@v1
+        uses: hashgraph-online/skill-publish@be25745bc45fe05617c033e840661a7f0576be81
         with:
           mode: publish
           api-key: ${{ secrets.RB_API_KEY }}
@@ -527,14 +533,15 @@ An HRL looks like: `hcs://1/0.0.12345`
 
 ## Trust and Security Defaults
 
-- Validate workflows should grant `contents: read` and `id-token: write`.
+- Validate workflows should grant only `contents: read` by default.
+- Preview uploads should be opt-in and limited to trusted repo-owned workflows. Do not grant `id-token: write` to fork-triggered `pull_request` jobs just to validate package structure.
 - Publish workflows that annotate releases or PRs typically also need `contents: write`, `pull-requests: write`, and `issues: write`.
 - Store `RB_API_KEY` in repository or organization secrets.
 - If you do not need GitHub annotations, set `annotate: "false"` and omit `github-token`.
 - For strict supply-chain pinning, pin to a full commit SHA instead of `@v1`:
 
 ```yaml
-uses: hashgraph-online/skill-publish@93aee116a8a4b8d90dcde8cfb64628bc255becde
+uses: hashgraph-online/skill-publish@be25745bc45fe05617c033e840661a7f0576be81
 ```
 
 - When annotations are disabled, this tighter permission set is sufficient:

@@ -168,10 +168,12 @@ const oidcServer = await listenServer(async (request, response) => {
     response.end(
       JSON.stringify({
         id: 'preview-record-1',
+        previewId: 'preview_demo',
         source: 'github-oidc',
         generatedAt: '2026-04-04T10:00:00.000Z',
         expiresAt: '2026-04-11T10:00:00.000Z',
         statusUrl: 'https://hol.org/registry/skills/valid-skill',
+        authoritative: false,
         report: JSON.parse(body),
       }),
     );

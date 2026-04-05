@@ -1,4 +1,9 @@
-import { fetchBalance, normalizeBaseUrl, requestJson } from './broker-api.mjs';
+import {
+  createLedgerChallenge,
+  fetchBalance,
+  normalizeBaseUrl,
+  verifyLedgerChallenge,
+} from './broker-api.mjs';
 import { maskApiKey, saveCredential } from './credential-store.mjs';
 import { runFundFlow } from './account-commands.mjs';
 
@@ -39,13 +44,10 @@ async function signWithHederaPrivateKey(message, privateKeyValue) {
 }
 
 async function createLedgerApiKey(params) {
-  const challenge = await requestJson({
-    method: 'POST',
-    url: `${params.baseUrl}/auth/ledger/challenge`,
-    body: {
-      accountId: params.accountId,
-      network: params.network,
-    },
+  const challenge = await createLedgerChallenge({
+    baseUrl: params.baseUrl,
+    accountId: params.accountId,
+    network: params.network,
   });
 
   if (!challenge || typeof challenge !== 'object' || typeof challenge.challengeId !== 'string' || typeof challenge.message !== 'string') {
@@ -64,18 +66,17 @@ async function createLedgerApiKey(params) {
         }
       : await signWithHederaPrivateKey(challenge.message, params.hederaPrivateKey);
 
-  const verification = await requestJson({
-    method: 'POST',
-    url: `${params.baseUrl}/auth/ledger/verify`,
-    body: {
-      challengeId: challenge.challengeId,
-      accountId: params.accountId,
-      network: params.network,
-      signature: signaturePayload.signature,
-      signatureKind: signaturePayload.signatureKind,
-      ...(signaturePayload.publicKey ? { publicKey: signaturePayload.publicKey } : {}),
-      ...(typeof params.expiresInMinutes === 'number' ? { expiresInMinutes: params.expiresInMinutes } : {}),
-    },
+  const verification = await verifyLedgerChallenge({
+    baseUrl: params.baseUrl,
+    challengeId: challenge.challengeId,
+    accountId: params.accountId,
+    network: params.network,
+    signature: signaturePayload.signature,
+    signatureKind: signaturePayload.signatureKind,
+    ...(signaturePayload.publicKey ? { publicKey: signaturePayload.publicKey } : {}),
+    ...(typeof params.expiresInMinutes === 'number'
+      ? { expiresInMinutes: params.expiresInMinutes }
+      : {}),
   });
 
   if (!verification || typeof verification !== 'object' || typeof verification.key !== 'string') {

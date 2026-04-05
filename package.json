@@ -54,6 +54,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@hol-org/rb-client": "^0.1.177",
     "@hashgraph/sdk": "^2.78.0",
     "picocolors": "^1.1.1"
   },

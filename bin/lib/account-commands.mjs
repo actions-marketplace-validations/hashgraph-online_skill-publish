@@ -1,5 +1,10 @@
 import { Client, PrivateKey, Transaction } from '@hashgraph/sdk';
-import { fetchBalance, fetchProviders, normalizeBaseUrl, requestJson } from './broker-api.mjs';
+import {
+  createHbarPurchaseIntent as createHbarPurchaseIntentRequest,
+  fetchBalance,
+  fetchProviders,
+  normalizeBaseUrl,
+} from './broker-api.mjs';
 import {
   loadCredential,
   maskApiKey,
@@ -50,20 +55,13 @@ function resolveCredential(options) {
 }
 
 async function createHbarPurchaseIntent(params) {
-  const payload = {
+  return createHbarPurchaseIntentRequest({
+    baseUrl: params.baseUrl,
+    apiKey: params.apiKey,
     accountId: params.accountId,
     ...(params.credits ? { credits: params.credits } : {}),
     ...(params.hbarAmount ? { hbarAmount: params.hbarAmount } : {}),
     ...(params.memo ? { memo: params.memo } : {}),
-  };
-  return requestJson({
-    method: 'POST',
-    url: `${params.baseUrl}/credits/payments/hbar/intent`,
-    headers: {
-      'x-api-key': params.apiKey,
-      'x-account-id': params.accountId,
-    },
-    body: payload,
   });
 }
 

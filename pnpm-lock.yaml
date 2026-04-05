@@ -15,6 +15,9 @@ importers:
       '@hashgraph/sdk':
         specifier: ^2.78.0
         version: 2.80.0(bn.js@5.2.3)(react-native@0.84.1(@babel/core@7.29.0)(react@19.2.4))
+      '@hol-org/rb-client':
+        specifier: ^0.1.177
+        version: 0.1.177(@hashgraph/sdk@2.80.0(bn.js@5.2.3)(react-native@0.84.1(@babel/core@7.29.0)(react@19.2.4)))
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
@@ -262,6 +265,29 @@ packages:
     engines: {node: '>=18.0.0'}
     peerDependencies:
       bn.js: 5.2.3
+
+  '@hol-org/rb-client@0.1.177':
+    resolution: {integrity: sha512-+AlDRtrPF3Z7A5iRKQHSbebEwJ63UgFuZ9wKLgeGJA+uOJvYL/m5wawbyl2yRlL35xYdoae4CPUnTDWRRXRuUA==}
+    peerDependencies:
+      '@hashgraph/hedera-wallet-connect': ^2.0.4
+      '@hashgraph/sdk': ^2.77.0
+      axios: '>=1.13.6'
+      viem: '*'
+      x402: '*'
+      x402-axios: '*'
+    peerDependenciesMeta:
+      '@hashgraph/hedera-wallet-connect':
+        optional: true
+      '@hashgraph/sdk':
+        optional: true
+      axios:
+        optional: true
+      viem:
+        optional: true
+      x402:
+        optional: true
+      x402-axios:
+        optional: true
 
   '@isaacs/ttlcache@1.4.1':
     resolution: {integrity: sha512-RQgQ4uQ+pLbqXfOmieB91ejmLwvSgv9nLx6sT6sD83s7umBypgg+OIBOBbEUiJXrfpnp9j0mRhYYdzp9uqq3lA==}
@@ -1547,6 +1573,9 @@ packages:
     resolution: {integrity: sha512-7dSzzRQ++CKnNI/krKnYRV7JKKPUXMEh61soaHKg9mrWEhzFWhFnxPxGl+69cD1Ou63C13NUPCnmIcrvqCuM6w==}
     engines: {node: '>=12'}
 
+  zod@3.25.76:
+    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+
 snapshots:
 
   '@babel/code-frame@7.29.0':
@@ -1921,6 +1950,13 @@ snapshots:
       - expo-crypto
       - react-native
       - supports-color
+
+  '@hol-org/rb-client@0.1.177(@hashgraph/sdk@2.80.0(bn.js@5.2.3)(react-native@0.84.1(@babel/core@7.29.0)(react@19.2.4)))':
+    dependencies:
+      '@noble/curves': 2.0.1
+      zod: 3.25.76
+    optionalDependencies:
+      '@hashgraph/sdk': 2.80.0(bn.js@5.2.3)(react-native@0.84.1(@babel/core@7.29.0)(react@19.2.4))
 
   '@isaacs/ttlcache@1.4.1': {}
 
@@ -3355,3 +3391,5 @@ snapshots:
       string-width: 4.2.3
       y18n: 5.0.8
       yargs-parser: 21.1.1
+
+  zod@3.25.76: {}
