@@ -45,7 +45,7 @@ function buildPackageSummary(params) {
   };
 }
 
-function buildSuggestedNextSteps(params) {
+function buildSuggestedNextSteps() {
   return [
     {
       id: 'open-pull-request',
@@ -111,7 +111,7 @@ export function buildSkillPreviewReport(params) {
     validation_status: 'passed',
     findings: [],
     package_summary: buildPackageSummary(params),
-    suggested_next_steps: buildSuggestedNextSteps(params),
+    suggested_next_steps: buildSuggestedNextSteps(),
     generated_at: params.generatedAt,
   };
 }

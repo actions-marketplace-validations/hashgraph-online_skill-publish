@@ -22,6 +22,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const packagePath = path.resolve(__dirname, '..', 'package.json');
 const packageJson = JSON.parse(readFileSync(packagePath, 'utf8'));
+const MODE_FLAGS = new Set(['validate', 'monitor', 'quote', 'publish']);
 
 const OPTION_ENV_MAP = new Map([
   ['api-base-url', 'INPUT_API_BASE_URL'],
@@ -342,7 +343,7 @@ async function runPublishCommand(options, positionals) {
 
   if (!options['api-key']) {
     fail(
-      'Missing API key. Pass --api-key, set RB_API_KEY, or run `npx skill-publish setup --account-id <id> --hedera-private-key <key>`.',
+      'Missing API key. Pass --api-key, set RB_API_KEY, or run `npx skill-publish setup --account-id <id> --hedera-private-key <key>`. Publish also requires funded broker credits because the release is inscribed on-chain.',
       'publish',
     );
   }
@@ -366,7 +367,7 @@ async function runQuoteCommand(options, positionals) {
   applyCommonDefaults(options);
   if (!options['api-key']) {
     fail(
-      'Missing API key. Pass --api-key, set RB_API_KEY, or run `npx skill-publish setup --account-id <id> --hedera-private-key <key>`.',
+      'Missing API key. Pass --api-key, set RB_API_KEY, or run `npx skill-publish setup --account-id <id> --hedera-private-key <key>` before requesting an authenticated publish quote.',
       'quote',
     );
   }
@@ -501,6 +502,15 @@ async function run() {
 
   if (options['no-color']) {
     palette = createColors(false);
+  }
+
+  const modeOverride = String(options.mode ?? '').trim().toLowerCase();
+  if (command === 'publish' && modeOverride) {
+    if (!MODE_FLAGS.has(modeOverride)) {
+      fail(`Unsupported mode: ${modeOverride}`, 'publish');
+    }
+    await dispatchCommand(modeOverride, options, positionals);
+    return;
   }
 
   await dispatchCommand(command, options, positionals);

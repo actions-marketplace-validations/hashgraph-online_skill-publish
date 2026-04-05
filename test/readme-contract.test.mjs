@@ -34,18 +34,33 @@ assert.match(
 );
 assert.match(
   actionManifest,
-  /api-key:\n\s+description:\s+"Registry Broker API key \(required for quote and publish, optional for validate\)"\n\s+required:\s+false/u,
+  /api-key:\n\s+description:\s+"Registry Broker API key \(required for quote and publish, optional for validate\)"/u,
   'action.yml must keep api-key optional globally so validate remains secretless',
 );
 assert.match(
   actionManifest,
-  /preview-json:\n\s+description:\s+"Validate-mode preview artifact JSON payload"/u,
+  /preview-json:\n\s+description:\s+"Validate or monitor preview artifact JSON payload"/u,
   'action.yml must expose the preview-json output',
 );
 assert.match(
   actionManifest,
   /status-url:\n\s+description:\s+"Lifecycle status page URL when a preview or publish status page exists"/u,
   'action.yml must expose the status-url output',
+);
+assert.equal(
+  readme.includes('### GitHub Action (validate-first quickstart)'),
+  true,
+  'README must document validate-first GitHub setup explicitly.',
+);
+assert.equal(
+  readme.includes('### GitHub Action (release publishing)'),
+  true,
+  'README must keep the publish workflow documented separately.',
+);
+assert.equal(
+  readme.includes('Publishing immutable releases still consumes HOL Registry Broker credits.'),
+  true,
+  'README must state that publish remains credit-gated.',
 );
 
 process.stdout.write('readme/action contract test passed\n');

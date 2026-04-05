@@ -74,8 +74,8 @@ Core Commands:
   init [dir]          Scaffold SKILL.md + skill.json
   validate [dir]      Validate a skill package locally
   monitor [dir]       Validate and compare current state with broker lifecycle signals
-  quote [dir]         Validate package and fetch publish quote
-  publish [dir]       Validate, quote, and publish a skill package
+  quote [dir]         Validate package and fetch an authenticated publish quote
+  publish [dir]       Validate, quote, and publish a credit-funded skill release
   help [command]      Show help for a command
 
 Examples:
@@ -100,8 +100,9 @@ Examples:
   npx skill-publish init ./skills/weather-skill
   npx skill-publish validate ./skills/weather-skill
   npx skill-publish monitor ./skills/weather-skill
-  npx skill-publish quote ./skills/weather-skill
-  npx skill-publish publish ./skills/weather-skill
+  npx skill-publish quote --skill-dir ./skills/weather-skill
+  npx skill-publish publish --skill-dir ./skills/weather-skill
+  npx skill-publish --mode validate --skill-dir ./skills/weather-skill
 
 Legacy usage still works:
   RB_API_KEY=rbk_xxx npx skill-publish --skill-dir ./skills/weather-skill
@@ -109,6 +110,7 @@ Legacy usage still works:
 Global flags:
   -h, --help            Show help
   -v, --version         Show CLI version
+  --mode <mode>         Run validate, monitor, quote, or publish through the top-level command
   --no-color            Disable ANSI colors
   --non-interactive     Disable interactive prompts
 `;

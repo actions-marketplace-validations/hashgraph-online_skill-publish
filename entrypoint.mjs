@@ -65,6 +65,7 @@ const RETRYABLE_ERROR_MARKERS = [
 const INTEGER_VERSION_PATTERN = /^\d+$/;
 const SEMVER_VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.-]+)?$/;
 const SEMVER_PRERELEASE_PATTERN = /^\d+\.\d+\.\d+-[0-9A-Za-z.-]+(?:\+[0-9A-Za-z.-]+)?$/;
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 
 const getEnv = (name, fallback = '') => {
   const value = process.env[name];
@@ -237,25 +238,24 @@ const isRetryableRequestError = (error) => {
   return RETRYABLE_ERROR_MARKERS.some((marker) => message.includes(marker));
 };
 
-const requestJson = async (params) => {
-  const {
-    method,
-    url,
-    apiKey,
-    body,
-    signal,
-  } = params;
+const requestJsonWithHeaders = async (params) => {
+  const { method, url, headers = {}, body, signal, timeoutMs } = params;
+  const controller = signal ? null : new AbortController();
+  const activeSignal = signal ?? controller?.signal;
+  const timer = controller
+    ? setTimeout(() => {
+        controller.abort(
+          new Error(`Request timed out after ${timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS}ms`),
+        );
+      }, timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS)
+    : null;
   let response;
   try {
-    const headers = {
-      'content-type': 'application/json',
-      ...(apiKey ? { 'x-api-key': apiKey } : {}),
-    };
     response = await fetch(url, {
       method,
       headers,
       ...(body ? { body: JSON.stringify(body) } : {}),
-      signal,
+      signal: activeSignal,
     });
   } catch (error) {
     throw new ActionError(
@@ -264,6 +264,10 @@ const requestJson = async (params) => {
         code: extractErrorCode(error),
       },
     );
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
   }
   if (!response.ok) {
     const bodySummary = await summarizeErrorBody(response);
@@ -275,6 +279,36 @@ const requestJson = async (params) => {
     );
   }
   return response.json();
+};
+
+const requestJson = async (params) => {
+  const { method, url, apiKey, body, signal, timeoutMs } = params;
+  return requestJsonWithHeaders({
+    method,
+    url,
+    body,
+    signal,
+    timeoutMs,
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': apiKey,
+    },
+  });
+};
+
+const requestBearerJson = async (params) => {
+  const { method, url, token, body, signal, timeoutMs } = params;
+  return requestJsonWithHeaders({
+    method,
+    url,
+    body,
+    signal,
+    timeoutMs,
+    headers: {
+      authorization: `Bearer ${token}`,
+      ...(body ? { 'content-type': 'application/json' } : {}),
+    },
+  });
 };
 
 const requestJsonWithRetry = async (params) => {
@@ -291,6 +325,27 @@ const requestJsonWithRetry = async (params) => {
       const delayMs = Math.min(10_000, 1_000 * attempt);
       stderr(
         `Transient request failure on ${params.method} ${params.url}; retrying in ${delayMs}ms (retry ${attempt}/${attempts - 1}).`,
+      );
+      await sleep(delayMs);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new ActionError('Request failed');
+};
+
+const requestBearerJsonWithRetry = async (params) => {
+  const attempts = Number.isFinite(params.attempts) && params.attempts > 0 ? Math.floor(params.attempts) : 1;
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await requestBearerJson(params);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts || !isRetryableRequestError(error)) {
+        throw error;
+      }
+      const delayMs = Math.min(10_000, 1_000 * attempt);
+      stderr(
+        `Transient bearer request failure on ${params.method} ${params.url}; retrying in ${delayMs}ms (retry ${attempt}/${attempts - 1}).`,
       );
       await sleep(delayMs);
     }
@@ -336,6 +391,19 @@ const parseEventPayload = async () => {
     return JSON.parse(raw);
   } catch {
     return null;
+  }
+};
+
+const readPackageVersion = async () => {
+  const packageJsonPath = path.join(process.cwd(), 'package.json');
+  try {
+    const raw = await readFile(packageJsonPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    return typeof parsed?.version === 'string' && parsed.version.trim()
+      ? parsed.version.trim()
+      : '0.0.0';
+  } catch {
+    return '0.0.0';
   }
 };
 
@@ -803,8 +871,8 @@ const run = async () => {
   const pollTimeoutMs = parseNumber(getEnv('INPUT_POLL_TIMEOUT_MS'), 720000);
   const pollIntervalMs = parseNumber(getEnv('INPUT_POLL_INTERVAL_MS'), 4000);
   const shouldAnnotate = toBoolean(getEnv('INPUT_ANNOTATE'), true);
-  const shouldSubmitIndexNow = toBoolean(getEnv('INPUT_SUBMIT_INDEXNOW'), false);
   const shouldUploadPreview = toBoolean(getEnv('INPUT_PREVIEW_UPLOAD'), true);
+  const shouldSubmitIndexNow = toBoolean(getEnv('INPUT_SUBMIT_INDEXNOW'), false);
   const shouldRequestQuotePreview = toBoolean(getEnv('INPUT_QUOTE_PREVIEW'), false);
   const commentMode = String(getEnv('INPUT_COMMENT_MODE', 'state-changes')).trim().toLowerCase();
   const commentOnSuccess = toBoolean(getEnv('INPUT_COMMENT_ON_SUCCESS'), true);
@@ -969,6 +1037,9 @@ const run = async () => {
       await setActionOutput('skip-reason', result.skippedReason);
       await setActionOutput('skill-name', result.skillName);
       await setActionOutput('skill-version', result.skillVersion);
+      await setActionOutput('preview-json', '');
+      await setActionOutput('preview-json-path', '');
+      await setActionOutput('status-url', result.distribution.urls.skillPageUrl);
       await setActionOutput('quote-id', '');
       await setActionOutput('job-id', '');
       await setActionOutput('directory-topic-id', result.directoryTopicId ?? '');
@@ -1033,6 +1104,7 @@ const run = async () => {
 
   let totalBytes = 0;
   const files = [];
+  const previewFiles = [];
   const rewrittenSkillJsonBuffer = Buffer.from(`${JSON.stringify(parsedSkillJson, null, 2)}\n`, 'utf8');
   for (const file of discoveredFiles) {
     const bodyBuffer =
@@ -1049,6 +1121,12 @@ const run = async () => {
       base64: bodyBuffer.toString('base64'),
       mimeType,
       role: resolveRole(file.relativePath),
+    });
+    previewFiles.push({
+      name: file.relativePath,
+      mimeType,
+      role: resolveRole(file.relativePath),
+      sizeBytes: bodyBuffer.byteLength,
     });
   }
 
@@ -1213,6 +1291,9 @@ const run = async () => {
     await setActionOutput('skip-reason', 'validation-only');
     await setActionOutput('skill-name', skillName);
     await setActionOutput('skill-version', skillVersion);
+    await setActionOutput('preview-json', JSON.stringify(previewReport, null, 2));
+    await setActionOutput('preview-json-path', previewJsonPath);
+    await setActionOutput('status-url', statusUrl);
     await setActionOutput('quote-id', '');
     await setActionOutput('job-id', '');
     await setActionOutput('directory-topic-id', '');
@@ -1251,7 +1332,14 @@ const run = async () => {
       ].join('\n'),
     );
     if (jsonOutput) {
-      printJson(validationResult);
+      printJson({
+        ...validationResult,
+        preview: {
+          report: previewReport,
+          path: previewJsonPath,
+          statusUrl,
+        },
+      });
     } else {
       stdout(
         `${mode === 'monitor' ? 'Monitor' : 'Validation'} complete for ${skillName}@${skillVersion}.`,
@@ -1297,6 +1385,9 @@ const run = async () => {
     await setActionOutput('skip-reason', 'quote-only');
     await setActionOutput('skill-name', skillName);
     await setActionOutput('skill-version', skillVersion);
+    await setActionOutput('preview-json', '');
+    await setActionOutput('preview-json-path', '');
+    await setActionOutput('status-url', distribution.urls.skillPageUrl);
     await setActionOutput('quote-id', quoteId);
     await setActionOutput('job-id', '');
     await setActionOutput('directory-topic-id', '');
@@ -1418,6 +1509,9 @@ const run = async () => {
   await setActionOutput('skip-reason', '');
   await setActionOutput('skill-name', result.skillName);
   await setActionOutput('skill-version', result.skillVersion);
+  await setActionOutput('preview-json', '');
+  await setActionOutput('preview-json-path', '');
+  await setActionOutput('status-url', result.distribution.urls.skillPageUrl);
   await setActionOutput('quote-id', result.quoteId);
   await setActionOutput('job-id', result.jobId);
   await setActionOutput('directory-topic-id', result.directoryTopicId ?? '');
@@ -1466,6 +1560,9 @@ run().catch(async error => {
   stderr(`Error: ${message}`);
   const outputPath = getEnv('GITHUB_OUTPUT');
   if (outputPath) {
+    await setActionOutput('preview-json', '');
+    await setActionOutput('preview-json-path', '');
+    await setActionOutput('status-url', '');
     await setActionOutput('annotation-target', 'failed');
   }
   process.exit(1);

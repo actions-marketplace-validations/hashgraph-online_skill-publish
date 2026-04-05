@@ -80,7 +80,7 @@ inputs:
     required: false
 outputs:
   preview-json:
-    description: "Validate-mode preview artifact JSON payload"
+    description: "Validate or monitor preview artifact JSON payload"
     value: ${{ steps.publish.outputs.preview-json }}
   preview-json-path:
     description: "Path to the local preview artifact JSON file written during validate or monitor"
@@ -243,6 +243,7 @@ runs:
         INPUT_POLL_TIMEOUT_MS: ${{ inputs.poll-timeout-ms }}
         INPUT_POLL_INTERVAL_MS: ${{ inputs.poll-interval-ms }}
         INPUT_ANNOTATE: ${{ inputs.annotate }}
+        INPUT_PREVIEW_UPLOAD: ${{ inputs.preview-upload }}
         INPUT_SUBMIT_INDEXNOW: ${{ inputs.submit-indexnow }}
         INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
         INPUT_PREVIEW_UPLOAD: ${{ inputs.preview-upload }}
