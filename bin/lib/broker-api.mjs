@@ -34,6 +34,21 @@ function createClient(params = {}) {
   });
 }
 
+function splitRequestUrl(value) {
+  const url = new URL(String(value));
+  const apiIndex = url.pathname.indexOf('/api/v1');
+  if (apiIndex === -1) {
+    throw new Error(`Request URL must include /api/v1: ${url.toString()}`);
+  }
+  const baseOriginPath = url.pathname.slice(0, apiIndex);
+  const baseUrl = `${url.origin}${baseOriginPath}/api/v1`;
+  const requestPath = `${url.pathname.slice(apiIndex + '/api/v1'.length)}${url.search}`;
+  return {
+    baseUrl,
+    requestPath: requestPath || '/',
+  };
+}
+
 function summarizeErrorBody(body) {
   if (!body) {
     return '';
@@ -64,35 +79,43 @@ function toBrokerError(label, error) {
 }
 
 export async function requestJson(params) {
-  const client = createClient(params);
-  const normalizedPath =
-    params.path ??
-    (() => {
-      const url = new URL(params.url);
-      return `${url.pathname.replace(/\/api\/v1/u, '')}${url.search}`;
-    })();
+  const derivedTarget = params.path
+    ? {
+      baseUrl: normalizeBaseUrl(params.baseUrl),
+      requestPath: params.path,
+    }
+    : splitRequestUrl(params.url);
+  const client = createClient({
+    ...params,
+    baseUrl: derivedTarget.baseUrl,
+  });
   try {
-    return await client.requestJson(normalizedPath, {
+    return await client.requestJson(derivedTarget.requestPath, {
       method: params.method,
       ...(params.headers ? { headers: params.headers } : {}),
       ...(params.body ? { body: params.body } : {}),
       ...(params.signal ? { signal: params.signal } : {}),
     });
   } catch (error) {
-    throw toBrokerError(`${params.method} ${normalizeBaseUrl(params.baseUrl)}`, error);
+    throw toBrokerError(`${params.method} ${derivedTarget.baseUrl}`, error);
   }
 }
 
-export async function requestJsonWithTimeout(url, headers = {}, timeoutMs = 8000) {
+export async function requestJsonWithTimeout(
+  url,
+  headers = {},
+  timeoutMs = 8000,
+  fetchImplementation,
+) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await requestJson({
       method: 'GET',
       url,
-      baseUrl: url,
       headers,
       signal: controller.signal,
+      ...(fetchImplementation ? { fetchImplementation } : {}),
     });
   } finally {
     clearTimeout(timer);
