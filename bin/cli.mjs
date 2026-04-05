@@ -302,6 +302,25 @@ function adoptPositionalSkillDir(options, positionals) {
 async function runPublishCommand(options, positionals) {
   adoptPositionalSkillDir(options, positionals);
   applyPublishDefaults(options);
+  const modeOverride = String(options.mode ?? '').trim().toLowerCase();
+  if (modeOverride === 'validate') {
+    await runEntrypoint('validate', options);
+    return;
+  }
+  if (modeOverride === 'monitor') {
+    await runEntrypoint('monitor', options);
+    return;
+  }
+  if (modeOverride === 'quote') {
+    if (!options['api-key']) {
+      fail(
+        'Missing API key. Pass --api-key, set RB_API_KEY, or run `npx skill-publish setup --account-id <id> --hedera-private-key <key>`.',
+        'quote',
+      );
+    }
+    await runEntrypoint('quote', options);
+    return;
+  }
   const shouldPrintInformational = !Boolean(options.json);
 
   if (options['dry-run']) {
@@ -336,6 +355,12 @@ async function runValidateCommand(options, positionals) {
   await runEntrypoint('validate', options);
 }
 
+async function runMonitorCommand(options, positionals) {
+  adoptPositionalSkillDir(options, positionals);
+  applyCommonDefaults(options);
+  await runEntrypoint('monitor', options);
+}
+
 async function runQuoteCommand(options, positionals) {
   adoptPositionalSkillDir(options, positionals);
   applyCommonDefaults(options);
@@ -355,6 +380,10 @@ async function dispatchCommand(command, options, positionals) {
   }
   if (command === 'validate') {
     await runValidateCommand(options, positionals);
+    return;
+  }
+  if (command === 'monitor') {
+    await runMonitorCommand(options, positionals);
     return;
   }
   if (command === 'quote') {

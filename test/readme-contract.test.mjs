@@ -1,0 +1,51 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+
+const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const readme = await readFile(path.join(repoRoot, 'README.md'), 'utf8');
+const actionManifest = await readFile(path.join(repoRoot, 'action.yml'), 'utf8');
+
+const validateWorkflowIndex = readme.indexOf('name: Validate Skill');
+const publishWorkflowIndex = readme.indexOf('name: Publish Skill');
+
+assert.notEqual(validateWorkflowIndex, -1, 'README must include the validate workflow example');
+assert.notEqual(publishWorkflowIndex, -1, 'README must include the publish workflow example');
+assert.ok(
+  validateWorkflowIndex < publishWorkflowIndex,
+  'README must present the validate workflow example before the publish workflow example',
+);
+
+const quickStartIndex = readme.indexOf('## Quick Start');
+const quickStartValidateIndex = readme.indexOf('mode: validate', quickStartIndex);
+const quickStartPublishIndex = readme.indexOf('api-key: ${{ secrets.RB_API_KEY }}', quickStartIndex);
+
+assert.notEqual(quickStartValidateIndex, -1, 'Quick Start must mention validate mode');
+assert.notEqual(quickStartPublishIndex, -1, 'Quick Start must mention publish credentials');
+assert.ok(
+  quickStartValidateIndex < quickStartPublishIndex,
+  'Quick Start must lead with validate-first guidance before publish credentials',
+);
+
+assert.match(
+  actionManifest,
+  /mode:\n\s+description:\s+"Execution mode: validate, monitor, quote, or publish"/u,
+  'action.yml must expose the public mode input',
+);
+assert.match(
+  actionManifest,
+  /api-key:\n\s+description:\s+"Registry Broker API key \(required for quote and publish, optional for validate\)"\n\s+required:\s+false/u,
+  'action.yml must keep api-key optional globally so validate remains secretless',
+);
+assert.match(
+  actionManifest,
+  /preview-json:\n\s+description:\s+"Validate-mode preview artifact JSON payload"/u,
+  'action.yml must expose the preview-json output',
+);
+assert.match(
+  actionManifest,
+  /status-url:\n\s+description:\s+"Lifecycle status page URL when a preview or publish status page exists"/u,
+  'action.yml must expose the status-url output',
+);
+
+process.stdout.write('readme/action contract test passed\n');
