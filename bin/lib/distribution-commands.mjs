@@ -4,6 +4,7 @@ import { applyDistributionKit } from './apply-distribution-kit.mjs';
 import { stringifyCodemetaDocument } from './codemeta.mjs';
 import { buildDistributionKit } from './distribution-kit.mjs';
 import { submitToIndexNow } from './indexnow.mjs';
+import { readSkillPackageState, resolveSkillPackageMetadata } from './skill-package.mjs';
 
 async function loadSkillJson(skillDir) {
   const filePath = path.join(skillDir, 'skill.json');
@@ -23,32 +24,44 @@ async function maybeLoadSkillJson(skillDir) {
   }
 }
 
-async function resolveNameVersion(options, positionals, context) {
+async function maybeLoadSkillMetadata(skillDir) {
+  const state = await readSkillPackageState(skillDir).catch(() => null);
+  if (!state?.hasSkillMd || state.invalidSkillJson) {
+    return null;
+  }
+  return resolveSkillPackageMetadata({
+    skillDir,
+    skillMdText: state.skillMdText,
+    parsedSkillJson: state.parsedSkillJson,
+  });
+}
+
+async function resolveSkillIdentity(options, positionals, context) {
   const skillDir = path.resolve(process.cwd(), positionals[0] ?? options['skill-dir'] ?? '.');
   const explicitName = String(options.name ?? '').trim();
   const explicitVersion = String(options.version ?? '').trim();
   if (explicitName && explicitVersion) {
-    return { name: explicitName, version: explicitVersion };
+    return { name: explicitName, version: explicitVersion, skillDir, skillMetadata: null };
   }
 
-  let parsed = null;
+  let skillMetadata = null;
   try {
-    parsed = await loadSkillJson(skillDir);
+    skillMetadata = (await maybeLoadSkillMetadata(skillDir)) ?? (await loadSkillJson(skillDir));
   } catch (error) {
     if (!explicitName || !explicitVersion) {
       context.fail(
-        `Unable to resolve skill identity. Provide --name and --version, or ensure ${path.relative(process.cwd(), skillDir) || '.'}/skill.json exists.`,
+        `Unable to resolve skill identity. Provide --name and --version, or ensure ${path.relative(process.cwd(), skillDir) || '.'}/SKILL.md exists.`,
       );
     }
   }
 
-  const name = explicitName || String(parsed?.name ?? '').trim();
-  const version = explicitVersion || String(parsed?.version ?? '').trim();
+  const name = explicitName || String(skillMetadata?.name ?? '').trim();
+  const version = explicitVersion || String(skillMetadata?.version ?? '').trim();
   if (!name || !version) {
     context.fail('Missing skill name/version. Provide --name and --version or valid skill.json.');
   }
 
-  return { name, version };
+  return { name, version, skillDir, skillMetadata };
 }
 
 function printResult(payload, options) {
@@ -65,9 +78,11 @@ function resolveFormat(value, fallback) {
 }
 
 export async function runDistributionCommand(command, options, positionals, context) {
-  const identity = await resolveNameVersion(options, positionals, context);
-  const skillDir = path.resolve(process.cwd(), positionals[0] ?? options['skill-dir'] ?? '.');
-  const parsedSkillJson = await maybeLoadSkillJson(skillDir);
+  const identity = await resolveSkillIdentity(options, positionals, context);
+  const parsedSkillJson =
+    identity.skillMetadata ??
+    (await maybeLoadSkillMetadata(identity.skillDir)) ??
+    (await maybeLoadSkillJson(identity.skillDir));
   const kit = buildDistributionKit({
     name: identity.name,
     version: identity.version,

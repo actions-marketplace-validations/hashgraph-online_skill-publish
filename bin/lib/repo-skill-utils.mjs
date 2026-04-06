@@ -5,10 +5,10 @@ import path from 'node:path';
 export const PINNED_CHECKOUT_ACTION_REF =
   'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683';
 export const PINNED_SKILL_PUBLISH_ACTION_REF =
-  'hashgraph-online/skill-publish@4119400f6195122738899822e128c3c515b45301';
+  'hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d';
 
-const REQUIRED_SKILL_FILES = ['SKILL.md', 'skill.json'];
-const OPTIONAL_SKILL_FILES = ['apis.json', 'llms.txt'];
+const REQUIRED_SKILL_FILES = ['SKILL.md'];
+const OPTIONAL_SKILL_FILES = ['skill.json', 'apis.json', 'llms.txt'];
 const IGNORED_DIRECTORIES = new Set([
   '.git',
   '.github',
@@ -108,7 +108,7 @@ async function collectSkillMetadata(repoDir, relativeDir = '', records = new Map
       continue;
     }
 
-    if (!REQUIRED_SKILL_FILES.includes(entry.name)) {
+    if (![...REQUIRED_SKILL_FILES, 'skill.json'].includes(entry.name)) {
       continue;
     }
 
@@ -138,7 +138,7 @@ export async function inspectSkillRepo(repoDir) {
 
   const issues = [];
   if (packages.length === 0) {
-    issues.push('No HOL skill package found. A valid package needs SKILL.md and skill.json in the same directory.');
+    issues.push('No HOL skill package found. A valid package needs SKILL.md in the same directory.');
   }
   if (packages.length > 1) {
     issues.push('Multiple HOL skill packages found. Choose one explicitly with --skill-dir.');
@@ -193,7 +193,10 @@ function buildPrepareSkillPackageStep(skillDir) {
           SOURCE_DIR=${sourceDirLiteral}
           PACKAGE_DIR="publish-package-\${GITHUB_RUN_ID}-\${GITHUB_RUN_ATTEMPT}"
           mkdir -p "\${PACKAGE_DIR}/references" "\${PACKAGE_DIR}/schemas"
-          cp "\${SOURCE_DIR}/SKILL.md" "\${SOURCE_DIR}/skill.json" "\${PACKAGE_DIR}/"
+          cp "\${SOURCE_DIR}/SKILL.md" "\${PACKAGE_DIR}/"
+          if [[ -f "\${SOURCE_DIR}/skill.json" ]]; then
+            cp "\${SOURCE_DIR}/skill.json" "\${PACKAGE_DIR}/"
+          fi
           if [[ -f "\${SOURCE_DIR}/apis.json" ]]; then
             cp "\${SOURCE_DIR}/apis.json" "\${PACKAGE_DIR}/"
           fi
@@ -212,19 +215,20 @@ function buildPrepareSkillPackageStep(skillDir) {
 function buildVersionResolutionStep(trigger, skillDir) {
   const skillJsonPath =
     skillDir === '.' ? './skill.json' : `./${toPosix(path.posix.join(skillDir, 'skill.json'))}`;
+  const skillJsonFallback = `const fs = require('node:fs'); const filePath = '${skillJsonPath}'; if (!fs.existsSync(filePath)) { console.log('1.0.0'); process.exit(0); } const skillJson = require(filePath); console.log(skillJson.version || '1.0.0');`;
   const body =
     trigger === 'release'
       ? `          RELEASE_TAG="\${{ github.event.release.tag_name }}"
           if [[ -n "\${RELEASE_TAG}" ]]; then
             RESOLVED_VERSION="\${RELEASE_TAG#v}"
           else
-            RESOLVED_VERSION="$(node -p "require('${skillJsonPath}').version")"
+            RESOLVED_VERSION="$(node -e "${skillJsonFallback}")"
           fi`
       : `          VERSION_INPUT="\${{ inputs.version }}"
           if [[ -n "\${VERSION_INPUT}" ]]; then
             RESOLVED_VERSION="\${VERSION_INPUT}"
           else
-            RESOLVED_VERSION="$(node -p "require('${skillJsonPath}').version")"
+            RESOLVED_VERSION="$(node -e "${skillJsonFallback}")"
           fi`;
 
   return `      - name: Resolve publish version

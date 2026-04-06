@@ -75,7 +75,7 @@ Getting Started:
   submit-indexnow [dir]  Submit canonical skill URLs to IndexNow
 
 Core Commands:
-  init [dir]          Scaffold SKILL.md + skill.json
+  init [dir]          Scaffold SKILL.md with generated metadata defaults
   validate [dir]      Validate a skill package locally
   monitor [dir]       Validate and compare current state with broker lifecycle signals
   quote [dir]         Validate package and fetch an authenticated publish quote
@@ -187,7 +187,7 @@ Options:
 `,
   init: `skill-publish init [dir]
 
-Scaffolds a new skill package with SKILL.md + skill.json.
+Scaffolds a new skill package with SKILL.md and a generated skill.json template.
 
 Options:
   --name <name>                Skill name (defaults to folder name)
@@ -296,7 +296,7 @@ Options:
 `,
   'inspect-repo': `skill-publish inspect-repo [repoDir]
 
-Inspects an existing repository for valid HOL skill packages before setup-action or outreach. A valid package must contain both SKILL.md and skill.json in the same directory.
+Inspects an existing repository for valid HOL skill packages before setup-action or outreach. A valid package must contain SKILL.md in the same directory; skill.json is optional and will be synthesized when absent.
 
 Options:
   --repo-dir <dir>             Repository directory (or pass [repoDir] positional)
@@ -330,7 +330,7 @@ Options:
   --api-key <key>              API key (or RB_API_KEY env var / local credential store)
   --account-id <id>            Hedera account ID for balance checks
   --skill-dir <dir>            Skill directory; [dir] positional also supported
-  --fix                        Repair missing SKILL.md, invalid skill.json, and missing required metadata
+  --fix                        Repair missing SKILL.md, invalid skill.json, and synthesize missing metadata
   --local-only                 Skip broker/auth/credits checks and only verify local package readiness
   --store-path <path>          Optional path for local credential store
   --json                       Print machine-readable summary

@@ -82,7 +82,7 @@ function mergeTags(existingTags, fallbackTags, skillName) {
   return merged;
 }
 
-function buildNormalizedSkillJson(params) {
+export function buildNormalizedSkillJson(params) {
   const preset = resolveSkillPreset(params.preset);
   const existing = params.existingSkillJson ?? {};
   const inferredHeading = inferHeading(params.skillMdText);
@@ -126,6 +126,18 @@ function buildNormalizedSkillJson(params) {
   };
 }
 
+export function resolveSkillPackageMetadata(params) {
+  return buildNormalizedSkillJson({
+    existingSkillJson: params.parsedSkillJson ?? {},
+    skillMdText: params.skillMdText ?? '',
+    skillDir: params.skillDir,
+    name: params.name,
+    version: params.version,
+    description: params.description,
+    preset: params.preset,
+  });
+}
+
 export async function readSkillPackageState(skillDir) {
   const skillMdPath = path.join(skillDir, 'SKILL.md');
   const skillJsonPath = path.join(skillDir, 'skill.json');
@@ -140,9 +152,6 @@ export async function readSkillPackageState(skillDir) {
 
   if (!hasSkillMd) {
     missingFields.push('SKILL.md');
-  }
-  if (!hasSkillJson) {
-    missingFields.push('skill.json');
   }
   if (parsedSkillJson) {
     if (!readNonEmptyString(parsedSkillJson.name)) {

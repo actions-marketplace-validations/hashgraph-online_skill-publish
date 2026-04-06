@@ -15,6 +15,7 @@ function runCli(args, cwd) {
 
 const runtimeRoot = await mkdtemp(path.join(repoRoot, 'test-runtime-'));
 const existingRepoDir = path.join(runtimeRoot, 'existing-skill-repo');
+const markdownOnlyRepoDir = path.join(runtimeRoot, 'markdown-only-skill-repo');
 const invalidRepoDir = path.join(runtimeRoot, 'invalid-skill-repo');
 const ambiguousRepoDir = path.join(runtimeRoot, 'ambiguous-skill-repo');
 const fixtureOnlyRepoDir = path.join(runtimeRoot, 'fixture-only-repo');
@@ -42,12 +43,28 @@ try {
     )}\n`,
     'utf8',
   );
+  await mkdir(path.join(markdownOnlyRepoDir, 'skills', 'docs-skill'), {
+    recursive: true,
+  });
+  await writeFile(
+    path.join(markdownOnlyRepoDir, 'skills', 'docs-skill', 'SKILL.md'),
+    '# Docs Skill\n\nUse this skill to answer docs questions.\n',
+    'utf8',
+  );
   await mkdir(path.join(invalidRepoDir, 'skills', 'broken-skill'), {
     recursive: true,
   });
   await writeFile(
-    path.join(invalidRepoDir, 'skills', 'broken-skill', 'SKILL.md'),
-    '# Broken Skill\n',
+    path.join(invalidRepoDir, 'skills', 'broken-skill', 'skill.json'),
+    `${JSON.stringify(
+      {
+        name: 'broken-skill',
+        version: '1.0.0',
+        description: 'Broken skill',
+      },
+      null,
+      2,
+    )}\n`,
     'utf8',
   );
   await mkdir(path.join(ambiguousRepoDir, 'skills', 'alpha-skill'), {
@@ -124,6 +141,19 @@ try {
   );
   assert.equal(inspectExisting.recommendedSkillDir, 'skills/weather-skill');
 
+  const inspectMarkdownOnlyResult = runCli(
+    ['inspect-repo', markdownOnlyRepoDir, '--json'],
+    repoRoot,
+  );
+  assert.equal(inspectMarkdownOnlyResult.status, 0, inspectMarkdownOnlyResult.stderr);
+  const inspectMarkdownOnly = JSON.parse(inspectMarkdownOnlyResult.stdout);
+  assert.equal(inspectMarkdownOnly.readyForSetupAction, true);
+  assert.deepEqual(
+    inspectMarkdownOnly.packages.map((entry) => entry.dir),
+    ['skills/docs-skill'],
+  );
+  assert.equal(inspectMarkdownOnly.recommendedSkillDir, 'skills/docs-skill');
+
   const inspectInvalidResult = runCli(['inspect-repo', invalidRepoDir, '--json'], repoRoot);
   assert.equal(inspectInvalidResult.status, 0, inspectInvalidResult.stderr);
   const inspectInvalid = JSON.parse(inspectInvalidResult.stdout);
@@ -134,7 +164,7 @@ try {
       dir: entry.dir,
       missing: entry.missing,
     })),
-    [{ dir: 'skills/broken-skill', missing: ['skill.json'] }],
+    [{ dir: 'skills/broken-skill', missing: ['SKILL.md'] }],
   );
 
   const inspectFixtureOnlyResult = runCli(
@@ -174,6 +204,26 @@ try {
   );
   assert.equal(setupActionResult.status, 0, setupActionResult.stderr);
 
+  const markdownOnlySetupActionResult = runCli(
+    ['setup-action', markdownOnlyRepoDir, '--with-validate'],
+    repoRoot,
+  );
+  assert.equal(
+    markdownOnlySetupActionResult.status,
+    0,
+    markdownOnlySetupActionResult.stderr,
+  );
+
+  const markdownOnlyValidateWorkflow = await readFile(
+    path.join(markdownOnlyRepoDir, '.github', 'workflows', 'validate-skill.yml'),
+    'utf8',
+  );
+  assert.equal(
+    markdownOnlyValidateWorkflow.includes('skill-dir: ${{ steps.package.outputs.dir }}'),
+    true,
+    'Markdown-only skill repos must still generate a validate workflow that stages the package.',
+  );
+
   const validateWorkflow = await readFile(
     path.join(existingRepoDir, '.github', 'workflows', 'validate-skill.yml'),
     'utf8',
@@ -200,7 +250,7 @@ try {
   );
   assert.equal(
     validateWorkflow.includes(
-      'hashgraph-online/skill-publish@4119400f6195122738899822e128c3c515b45301',
+      'hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d',
     ),
     true,
     'Validate workflow must pin the skill-publish action to an immutable commit SHA.',
@@ -258,7 +308,7 @@ try {
   );
   assert.equal(
     scaffoldedValidateWorkflow.includes(
-      'hashgraph-online/skill-publish@4119400f6195122738899822e128c3c515b45301',
+      'hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d',
     ),
     true,
     'Scaffolded validate workflow must pin skill-publish to an immutable commit SHA.',
@@ -296,7 +346,7 @@ try {
   );
   assert.equal(
     publishMonorepoWorkflow.includes(
-      'hashgraph-online/skill-publish@4119400f6195122738899822e128c3c515b45301',
+      'hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d',
     ),
     true,
     'Monorepo example must pin the skill-publish action to an immutable commit SHA.',

@@ -19,6 +19,10 @@ import {
   formatPreviewNextActions,
 } from './bin/lib/preview-report.mjs';
 import {
+  readSkillPackageState,
+  resolveSkillPackageMetadata,
+} from './bin/lib/skill-package.mjs';
+import {
   buildManagedCommentBody,
   buildManagedCommentMarker,
   buildManagedCommentStateSignature,
@@ -803,24 +807,21 @@ const run = async () => {
 
   const { includedFiles: discoveredFiles, excludedFiles } = await discoverSkillPackageFiles(skillDir);
   const relativePaths = discoveredFiles.map(item => item.relativePath);
-  if (!relativePaths.includes('skill.json')) {
-    throw new ActionError(`Missing required file: ${path.posix.join(skillDirInput, 'skill.json')}`);
-  }
   if (!relativePaths.includes('SKILL.md')) {
     throw new ActionError(`Missing required file: ${path.posix.join(skillDirInput, 'SKILL.md')}`);
   }
 
-  const skillJsonAbsolutePath = path.join(skillDir, 'skill.json');
-  const rawSkillJson = await readFile(skillJsonAbsolutePath, 'utf8');
-  let parsedSkillJson;
-  try {
-    parsedSkillJson = JSON.parse(rawSkillJson);
-  } catch (error) {
-    throw new ActionError(`skill.json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  const skillPackageState = await readSkillPackageState(skillDir);
+  if (skillPackageState.invalidSkillJson) {
+    throw new ActionError(
+      `skill.json is not valid JSON: ${skillPackageState.skillJsonError}`,
+    );
   }
-  if (typeof parsedSkillJson !== 'object' || parsedSkillJson === null || Array.isArray(parsedSkillJson)) {
-    throw new ActionError('skill.json must be a JSON object.');
-  }
+  let parsedSkillJson = resolveSkillPackageMetadata({
+    skillDir,
+    skillMdText: skillPackageState.skillMdText,
+    parsedSkillJson: skillPackageState.parsedSkillJson,
+  });
 
   if (overrideName) {
     parsedSkillJson.name = overrideName;
@@ -1027,6 +1028,23 @@ const run = async () => {
       role: resolveRole(file.relativePath),
       sizeBytes: bodyBuffer.byteLength,
     });
+  }
+
+  if (!relativePaths.includes('skill.json')) {
+    const mimeType = guessMimeType('skill.json');
+    files.push({
+      name: 'skill.json',
+      base64: rewrittenSkillJsonBuffer.toString('base64'),
+      mimeType,
+      role: resolveRole('skill.json'),
+    });
+    previewFiles.push({
+      name: 'skill.json',
+      mimeType,
+      role: resolveRole('skill.json'),
+      sizeBytes: rewrittenSkillJsonBuffer.byteLength,
+    });
+    totalBytes += rewrittenSkillJsonBuffer.byteLength;
   }
 
   if (maxTotalSizeBytes > 0 && totalBytes > maxTotalSizeBytes) {
