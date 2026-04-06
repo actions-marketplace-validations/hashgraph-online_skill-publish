@@ -76,7 +76,7 @@ jobs:
           fi
           echo "version=${RESOLVED_VERSION}" >> "$GITHUB_OUTPUT"
       - name: Publish skill package
-        uses: hashgraph-online/skill-publish@4119400f6195122738899822e128c3c515b45301
+        uses: hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d
         with:
           mode: publish
           api-base-url: ${{ steps.target.outputs.api_base_url }}

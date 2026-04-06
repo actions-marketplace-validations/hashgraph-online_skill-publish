@@ -5,7 +5,7 @@ import path from 'node:path';
 export const PINNED_CHECKOUT_ACTION_REF =
   'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683';
 export const PINNED_SKILL_PUBLISH_ACTION_REF =
-  'hashgraph-online/skill-publish@4119400f6195122738899822e128c3c515b45301';
+  'hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d';
 
 const REQUIRED_SKILL_FILES = ['SKILL.md'];
 const OPTIONAL_SKILL_FILES = ['skill.json', 'apis.json', 'llms.txt'];

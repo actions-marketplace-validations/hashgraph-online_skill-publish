@@ -48,7 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Validate skill package
-        uses: hashgraph-online/skill-publish@4119400f6195122738899822e128c3c515b45301
+        uses: hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d
         with:
           mode: validate
           skill-dir: skills/my-skill
@@ -78,7 +78,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Publish skill package
-        uses: hashgraph-online/skill-publish@4119400f6195122738899822e128c3c515b45301
+        uses: hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d
         with:
           mode: publish
           api-key: ${{ secrets.RB_API_KEY }}
@@ -561,7 +561,7 @@ An HRL looks like: `hcs://1/0.0.12345`
 - For strict supply-chain pinning, pin to a full commit SHA instead of `@v1`:
 
 ```yaml
-uses: hashgraph-online/skill-publish@4119400f6195122738899822e128c3c515b45301
+uses: hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d
 ```
 
 - When annotations are disabled, this tighter permission set is sufficient:
