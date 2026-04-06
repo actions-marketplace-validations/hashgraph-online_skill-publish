@@ -39,6 +39,21 @@ assert.match(
 );
 assert.match(
   actionManifest,
+  /- name: Enable pnpm\n\s+shell: bash\n\s+working-directory: \$\{\{ github\.action_path \}\}\n\s+run: corepack enable pnpm/u,
+  'action.yml must enable pnpm inside github.action_path before running the entrypoint',
+);
+assert.match(
+  actionManifest,
+  /- name: Install action dependencies\n\s+shell: bash\n\s+working-directory: \$\{\{ github\.action_path \}\}\n\s+run: pnpm install --frozen-lockfile --prod --ignore-scripts/u,
+  'action.yml must install production dependencies inside github.action_path',
+);
+assert.equal(
+  actionManifest.match(/INPUT_PREVIEW_UPLOAD:/gu)?.length ?? 0,
+  1,
+  'action.yml must only declare INPUT_PREVIEW_UPLOAD once',
+);
+assert.match(
+  actionManifest,
   /preview-json:\n\s+description:\s+"Validate or monitor preview artifact JSON payload"/u,
   'action.yml must expose the preview-json output',
 );
