@@ -4,7 +4,12 @@ on:
   push:
     branches: [main]
     paths:
-      - "skills/my-skill/**"
+      - "skills/my-skill/SKILL.md"
+      - "skills/my-skill/skill.json"
+      - "skills/my-skill/apis.json"
+      - "skills/my-skill/llms.txt"
+      - "skills/my-skill/references/**"
+      - "skills/my-skill/schemas/**"
       - ".github/workflows/publish-skill.yml"
   workflow_dispatch:
 
@@ -12,12 +17,49 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
+      pull-requests: write
+      issues: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Prepare skill package
+        id: package
+        shell: bash
+        run: |
+          SOURCE_DIR="skills/my-skill"
+          PACKAGE_DIR="publish-package-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "${PACKAGE_DIR}/references" "${PACKAGE_DIR}/schemas"
+          cp "${SOURCE_DIR}/SKILL.md" "${SOURCE_DIR}/skill.json" "${PACKAGE_DIR}/"
+          if [[ -f "${SOURCE_DIR}/apis.json" ]]; then
+            cp "${SOURCE_DIR}/apis.json" "${PACKAGE_DIR}/"
+          fi
+          if [[ -f "${SOURCE_DIR}/llms.txt" ]]; then
+            cp "${SOURCE_DIR}/llms.txt" "${PACKAGE_DIR}/"
+          fi
+          if [[ -d "${SOURCE_DIR}/references" ]]; then
+            shopt -s nullglob
+            reference_files=("${SOURCE_DIR}"/references/*.md)
+            if (( ${#reference_files[@]} > 0 )); then
+              cp "${reference_files[@]}" "${PACKAGE_DIR}/references/"
+            fi
+          fi
+          if [[ -f "${SOURCE_DIR}/schemas/skill.schema.json" ]]; then
+            cp "${SOURCE_DIR}/schemas/skill.schema.json" "${PACKAGE_DIR}/schemas/"
+          fi
+          echo "dir=${PACKAGE_DIR}" >> "$GITHUB_OUTPUT"
+      - name: Resolve publish version
+        id: version
+        shell: bash
+        run: |
+          RESOLVED_VERSION="$(node -p "require('./package.json').version")"
+          echo "version=${RESOLVED_VERSION}" >> "$GITHUB_OUTPUT"
       - name: Publish skill package
-        uses: hashgraph-online/skill-publish@v1
+        uses: hashgraph-online/skill-publish@be25745bc45fe05617c033e840661a7f0576be81
         with:
+          mode: publish
           api-key: ${{ secrets.RB_API_KEY }}
-          skill-dir: skills/my-skill
+          skill-dir: ${{ steps.package.outputs.dir }}
+          version: ${{ steps.version.outputs.version }}
           annotate: "false"
+          submit-indexnow: "true"
+          github-token: ${{ github.token }}

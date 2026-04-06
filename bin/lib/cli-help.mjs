@@ -29,6 +29,9 @@ export const COMMAND_ALIASES = new Map([
   ['scaffold-repo', 'scaffold-repo'],
   ['scaffold', 'scaffold-repo'],
   ['bootstrap', 'scaffold-repo'],
+  ['inspect-repo', 'inspect-repo'],
+  ['inspect', 'inspect-repo'],
+  ['qualify-repo', 'inspect-repo'],
   ['doctor', 'doctor'],
   ['diag', 'doctor'],
   ['d', 'doctor'],
@@ -62,6 +65,7 @@ Getting Started:
   doctor [dir]        Run readiness checks for environment + skill package
   setup-action [dir]  Add a GitHub publish workflow to an existing skill repo
   scaffold-repo [dir] Scaffold a new skill repo with package + workflow
+  inspect-repo [dir]  Inspect a repo for real HOL skill packages before adding workflows
   badge [dir]            Generate canonical badge snippets and URLs
   install-url [dir]      Generate pinned/latest install URLs
   release-notes [dir]    Generate release-ready markdown for a published version
@@ -88,6 +92,7 @@ Examples:
   npx skill-publish create ./weather-skill --name weather-skill --preset api
   npx skill-publish setup-action . --skill-dir skills/my-skill
   npx skill-publish scaffold-repo ./weather-skill --name weather-skill --preset api
+  npx skill-publish inspect-repo .
   npx skill-publish badge ./skills/weather-skill
   npx skill-publish install-url ./skills/weather-skill --format json
   npx skill-publish release-notes ./skills/weather-skill
@@ -276,7 +281,7 @@ Options:
 `,
   'setup-action': `skill-publish setup-action [repoDir]
 
-Adds a skill-publish GitHub Actions workflow to an existing skill repository. The generated validate workflow is fork-safe by default and keeps preview upload disabled until maintainers opt in.
+Adds a skill-publish GitHub Actions workflow to an existing repository that already contains a valid HOL skill package. The generated validate workflow is fork-safe by default, stages only canonical package files, and keeps preview upload disabled until maintainers opt in.
 
 Options:
   --repo-dir <dir>             Repository directory (or pass [repoDir] positional)
@@ -288,6 +293,14 @@ Options:
   --with-validate <bool>       Also add a pull-request validate-only workflow (default: true)
   --annotate <bool>            Enable release/PR annotations (default: true)
   --force                      Overwrite existing workflow file
+`,
+  'inspect-repo': `skill-publish inspect-repo [repoDir]
+
+Inspects an existing repository for valid HOL skill packages before setup-action or outreach. A valid package must contain both SKILL.md and skill.json in the same directory.
+
+Options:
+  --repo-dir <dir>             Repository directory (or pass [repoDir] positional)
+  --json                       Print machine-readable summary
 `,
   'scaffold-repo': `skill-publish scaffold-repo [repoDir]
 
