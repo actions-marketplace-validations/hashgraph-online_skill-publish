@@ -105,6 +105,7 @@ After publish, use the returned canonical skill page, badge snippet, and resolve
 If you already have a repo and wallet, this is the shortest path to a live page:
 
 ```bash
+npx skill-publish inspect-repo .
 npx skill-publish setup-action . --skill-dir .
 npx skill-publish setup --account-id 0.0.12345 --hedera-private-key <key>
 git tag v1.0.0 && git push --tags
@@ -147,6 +148,9 @@ npx skill-publish publish --skill-dir ./skills/my-skill
 Repository automation flows:
 
 ```bash
+# Inspect an existing repo before opening a workflow PR
+npx skill-publish inspect-repo .
+
 # Add a publish workflow to an existing SKILL.md repository
 npx skill-publish setup-action . --skill-dir skills/my-skill
 
@@ -209,6 +213,22 @@ What `setup` does:
 - verifies the challenge and receives an API key
 - stores the key in `~/.skill-publish/credentials.json` (unless `--no-save`)
 - optionally purchases credits with `--hbar`
+
+## Repo Qualification Before Outreach
+
+Outreach PRs only work when the target repository already contains a real HOL skill package. Use `inspect-repo` first:
+
+```bash
+npx skill-publish inspect-repo .
+npx skill-publish inspect-repo . --json
+```
+
+What `inspect-repo` checks:
+- valid HOL packages with both `SKILL.md` and `skill.json`
+- partial skill-like directories that are missing one of those files
+- whether `setup-action` can be added safely without guessing a skill directory
+
+`setup-action` now refuses to generate workflows for repos that do not already contain a valid HOL skill package.
 
 After setup, `quote` and `publish` automatically reuse the stored key, so you can run:
 

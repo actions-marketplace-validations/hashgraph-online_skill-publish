@@ -14,7 +14,11 @@ import { loadCredential } from './lib/credential-store.mjs';
 import { runDoctorCommand } from './lib/doctor-command.mjs';
 import { runDistributionCommand } from './lib/distribution-commands.mjs';
 import { runInitCommand, runSetupCommand } from './lib/local-commands.mjs';
-import { runScaffoldRepoCommand, runSetupActionCommand } from './lib/repo-commands.mjs';
+import {
+  runInspectRepoCommand,
+  runScaffoldRepoCommand,
+  runSetupActionCommand,
+} from './lib/repo-commands.mjs';
 import { runStartCommand } from './lib/start-command.mjs';
 import { COMMAND_ALIASES, HELP_BY_COMMAND, buildGlobalHelp } from './lib/cli-help.mjs';
 
@@ -443,6 +447,13 @@ async function dispatchCommand(command, options, positionals) {
   }
   if (command === 'scaffold-repo') {
     await runScaffoldRepoCommand(options, positionals, {
+      fail,
+      colors: colors(),
+    });
+    return;
+  }
+  if (command === 'inspect-repo') {
+    await runInspectRepoCommand(options, positionals, {
       fail,
       colors: colors(),
     });
