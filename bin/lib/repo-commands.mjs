@@ -223,7 +223,7 @@ export async function runSetupActionCommand(options, positionals, context) {
       );
     }
     context.fail(
-      `Skill directory ${requestedSkillDir} does not contain both SKILL.md and skill.json.`,
+      `Skill directory ${requestedSkillDir} does not contain SKILL.md.`,
       'setup-action',
     );
   }

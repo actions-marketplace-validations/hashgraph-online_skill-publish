@@ -11,7 +11,7 @@ Immutability gives you:
 - **Reproducible retrieval:** the same canonical references resolve later (not “whatever is at this URL today”).
 - **Audit trail:** topic IDs, job IDs, and optional repo+commit stamping connect releases back to source.
 
-A skill package is `SKILL.md` + `skill.json` (plus optional files). The action validates, monitors lifecycle state, quotes, publishes, waits for completion, and emits outputs.
+A skill package starts with `SKILL.md`. `skill.json` is optional metadata; when it is absent, `skill-publish` synthesizes it during validate, quote, and publish flows.
 
 By default, `skill-publish` excludes hidden files and directories, env files, lockfiles, build output, local databases, and key/certificate material from package discovery before quote or publish.
 
@@ -224,8 +224,8 @@ npx skill-publish inspect-repo . --json
 ```
 
 What `inspect-repo` checks:
-- valid HOL packages with both `SKILL.md` and `skill.json`
-- partial skill-like directories that are missing one of those files
+- valid HOL packages with `SKILL.md` present
+- partial skill-like directories that are missing `SKILL.md`
 - whether `setup-action` can be added safely without guessing a skill directory
 
 `setup-action` now refuses to generate workflows for repos that do not already contain a valid HOL skill package.
@@ -293,7 +293,7 @@ Use this path when you want the full CI/CD setup with GitHub releases and annota
 1. Generate an API key: https://hol.org/registry/docs?tab=api-keys
 2. Add credits: https://hol.org/registry/docs?tab=credits
 3. Add `RB_API_KEY` as a GitHub secret.
-4. Commit `SKILL.md` and `skill.json` to your repo.
+4. Commit `SKILL.md` to your repo. Add `skill.json` only if you want to pin metadata explicitly instead of using synthesized defaults.
 5. Add the validate workflow for pull requests, then add the publish workflow for releases.
 
 Validate on pull requests without secrets:
@@ -407,7 +407,7 @@ This action exists to make that publish step deterministic and automated in CI.
 
 | You provide | Action handles |
 | --- | --- |
-| `skill-dir` with `SKILL.md` and `skill.json` | file discovery, MIME detection, size checks |
+| `skill-dir` with `SKILL.md` | file discovery, MIME detection, size checks, synthesized metadata when `skill.json` is absent |
 | `RB_API_KEY` secret for `quote` and `publish` only | authenticated broker calls that estimate or write on-chain state |
 | optional overrides (`name`, `version`) | payload shaping and metadata stamping |
 | optional annotation settings | release/PR annotation behavior |
@@ -419,7 +419,7 @@ This action exists to make that publish step deterministic and automated in CI.
 | --- | --- | --- | --- |
 | `mode` | No | `publish` | Execution mode: `validate`, `quote`, or `publish`. |
 | `api-key` | Validate: No, Quote/Publish: Yes | - | Registry Broker API key. Publish still consumes credits and requires funded broker auth. |
-| `skill-dir` | Yes | - | Path containing `SKILL.md` and `skill.json`. |
+| `skill-dir` | Yes | - | Path containing `SKILL.md`. `skill.json` is optional and will be synthesized when missing. |
 | `api-base-url` | No | `https://hol.org/registry/api/v1` | Broker base URL (`.../registry` or `.../registry/api/v1`). |
 | `account-id` | No | - | Optional Hedera account ID for publish authorization edge cases. |
 | `name` | No | - | Optional skill name override for `skill.json`. |
@@ -576,10 +576,10 @@ permissions:
 | Symptom | Likely Cause | Fix |
 | --- | --- | --- |
 | `skip-reason=version-exists` | Same `name@version` already published | Bump `version` in `skill.json` and re-run. |
-| Quote request fails | Missing credits or invalid package metadata | Top up credits, then validate `skill.json` fields and size limits. |
+| Quote request fails | Missing credits or invalid package metadata | Top up credits, then validate package metadata or pass explicit `name` / `version` overrides if needed. |
 | Publish job times out | Broker load or long queue | Increase `poll-timeout-ms` (for example, `1200000`) and re-run. |
 | `published=true` but no PR/release annotation | Missing write scopes or missing `github-token` | Add `pull-requests: write`, `issues: write`, `contents: write`, and pass `github-token`. |
-| Missing file validation error | `SKILL.md` or `skill.json` not found under `skill-dir` | Verify folder structure and `skill-dir` path in workflow. |
+| Missing file validation error | `SKILL.md` not found under `skill-dir` | Verify folder structure and `skill-dir` path in workflow. |
 | API authentication error | Wrong or revoked API key | Regenerate key at `/registry/docs?tab=api-keys` and update `RB_API_KEY` secret. |
 
 ## How Verification Works (HCS-26)

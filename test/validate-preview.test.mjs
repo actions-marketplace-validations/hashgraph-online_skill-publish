@@ -321,11 +321,19 @@ assert.match(
 );
 
 const missingSkillJsonRun = await runActionMode('missing-skill-json', 'validate');
-assert.ok(missingSkillJsonRun.error);
-assert.match(
-  `${missingSkillJsonRun.error.stderr ?? ''}${missingSkillJsonRun.error.message ?? ''}`,
-  /Missing required file: .*skill\.json/u,
+assert.equal(
+  missingSkillJsonRun.error,
+  undefined,
+  missingSkillJsonRun.error?.stderr ?? missingSkillJsonRun.error?.message,
 );
+const missingSkillJsonOutput = parseGithubOutput(
+  await readFile(missingSkillJsonRun.githubOutputPath, 'utf8'),
+);
+assert.equal(missingSkillJsonOutput.get('skill-name'), 'missing-skill-json');
+assert.equal(missingSkillJsonOutput.get('skill-version'), '1.0.0');
+assert.ok(missingSkillJsonOutput.has('preview-json'));
+assert.equal(missingSkillJsonOutput.get('trust-tier'), 'validated');
+assert.equal(missingSkillJsonOutput.get('publish-readiness'), 'ready');
 
 const invalidJsonRun = await runActionMode('invalid-skill-json', 'validate');
 assert.ok(invalidJsonRun.error);

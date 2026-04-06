@@ -4,6 +4,7 @@ import { applyDistributionKit } from './apply-distribution-kit.mjs';
 import { stringifyCodemetaDocument } from './codemeta.mjs';
 import { buildDistributionKit } from './distribution-kit.mjs';
 import { submitToIndexNow } from './indexnow.mjs';
+import { readSkillPackageState, resolveSkillPackageMetadata } from './skill-package.mjs';
 
 async function loadSkillJson(skillDir) {
   const filePath = path.join(skillDir, 'skill.json');
@@ -23,6 +24,18 @@ async function maybeLoadSkillJson(skillDir) {
   }
 }
 
+async function maybeLoadSkillMetadata(skillDir) {
+  const state = await readSkillPackageState(skillDir).catch(() => null);
+  if (!state?.hasSkillMd || state.invalidSkillJson) {
+    return null;
+  }
+  return resolveSkillPackageMetadata({
+    skillDir,
+    skillMdText: state.skillMdText,
+    parsedSkillJson: state.parsedSkillJson,
+  });
+}
+
 async function resolveNameVersion(options, positionals, context) {
   const skillDir = path.resolve(process.cwd(), positionals[0] ?? options['skill-dir'] ?? '.');
   const explicitName = String(options.name ?? '').trim();
@@ -33,11 +46,11 @@ async function resolveNameVersion(options, positionals, context) {
 
   let parsed = null;
   try {
-    parsed = await loadSkillJson(skillDir);
+    parsed = (await maybeLoadSkillMetadata(skillDir)) ?? (await loadSkillJson(skillDir));
   } catch (error) {
     if (!explicitName || !explicitVersion) {
       context.fail(
-        `Unable to resolve skill identity. Provide --name and --version, or ensure ${path.relative(process.cwd(), skillDir) || '.'}/skill.json exists.`,
+        `Unable to resolve skill identity. Provide --name and --version, or ensure ${path.relative(process.cwd(), skillDir) || '.'}/SKILL.md exists.`,
       );
     }
   }
@@ -67,7 +80,8 @@ function resolveFormat(value, fallback) {
 export async function runDistributionCommand(command, options, positionals, context) {
   const identity = await resolveNameVersion(options, positionals, context);
   const skillDir = path.resolve(process.cwd(), positionals[0] ?? options['skill-dir'] ?? '.');
-  const parsedSkillJson = await maybeLoadSkillJson(skillDir);
+  const parsedSkillJson =
+    (await maybeLoadSkillMetadata(skillDir)) ?? (await maybeLoadSkillJson(skillDir));
   const kit = buildDistributionKit({
     name: identity.name,
     version: identity.version,
