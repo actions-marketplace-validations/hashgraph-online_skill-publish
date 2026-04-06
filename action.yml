@@ -227,9 +227,13 @@ runs:
       uses: actions/setup-node@v4
       with:
         node-version: 20
+    - name: Install pnpm
+      shell: bash
+      run: corepack enable pnpm
     - name: Install dependencies
       shell: bash
-      run: cd "${{ github.action_path }}" && npm install --production
+      working-directory: ${{ github.action_path }}
+      run: pnpm install --frozen-lockfile --prod
     - name: Publish skill
       id: publish
       shell: bash
