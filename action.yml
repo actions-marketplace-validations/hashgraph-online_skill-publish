@@ -246,7 +246,6 @@ runs:
         INPUT_PREVIEW_UPLOAD: ${{ inputs.preview-upload }}
         INPUT_SUBMIT_INDEXNOW: ${{ inputs.submit-indexnow }}
         INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
-        INPUT_PREVIEW_UPLOAD: ${{ inputs.preview-upload }}
         INPUT_COMMENT_MODE: ${{ inputs.comment-mode }}
         INPUT_COMMENT_ON_SUCCESS: ${{ inputs.comment-on-success }}
         INPUT_QUOTE_PREVIEW: ${{ inputs.quote-preview }}
