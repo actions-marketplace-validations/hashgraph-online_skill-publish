@@ -270,10 +270,10 @@ export async function runSetupActionCommand(options, positionals, context) {
   );
 }
 
-export async function runInspectRepoCommand(options, positionals) {
+export async function runInspectRepoCommand(options, positionals, context) {
   const repoDir = path.resolve(process.cwd(), positionals[0] ?? options['repo-dir'] ?? '.');
   if (!(await isDirectory(repoDir))) {
-    throw new Error(`Repository directory not found: ${repoDir}`);
+    context.fail(`Repository directory not found: ${repoDir}`, 'inspect-repo');
   }
 
   const inspection = await inspectSkillRepo(repoDir);

@@ -51,7 +51,7 @@ jobs:
         id: version
         shell: bash
         run: |
-          RESOLVED_VERSION="$(node -p "require('./package.json').version")"
+          RESOLVED_VERSION="$(node -p "require('./skills/my-skill/skill.json').version")"
           echo "version=${RESOLVED_VERSION}" >> "$GITHUB_OUTPUT"
       - name: Publish skill package
         uses: hashgraph-online/skill-publish@be25745bc45fe05617c033e840661a7f0576be81

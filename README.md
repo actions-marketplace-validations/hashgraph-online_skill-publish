@@ -212,6 +212,7 @@ What `setup` does:
 - signs locally with your Hedera private key
 - verifies the challenge and receives an API key
 - stores the key in `~/.skill-publish/credentials.json` (unless `--no-save`)
+- optionally purchases credits with `--hbar`
 
 ## Repo Qualification Before Outreach
 
@@ -228,7 +229,6 @@ What `inspect-repo` checks:
 - whether `setup-action` can be added safely without guessing a skill directory
 
 `setup-action` now refuses to generate workflows for repos that do not already contain a valid HOL skill package.
-- optionally purchases credits with `--hbar`
 
 After setup, `quote` and `publish` automatically reuse the stored key, so you can run:
 

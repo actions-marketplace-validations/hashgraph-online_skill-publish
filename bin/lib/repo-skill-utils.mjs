@@ -201,32 +201,30 @@ function buildPrepareSkillPackageStep(skillDir) {
             cp "\${SOURCE_DIR}/llms.txt" "\${PACKAGE_DIR}/"
           fi
           if [[ -d "\${SOURCE_DIR}/references" ]]; then
-            shopt -s nullglob
-            reference_files=("\${SOURCE_DIR}"/references/*.md)
-            if (( \${#reference_files[@]} > 0 )); then
-              cp "\${reference_files[@]}" "\${PACKAGE_DIR}/references/"
-            fi
+            cp -r "\${SOURCE_DIR}/references/." "\${PACKAGE_DIR}/references/"
           fi
-          if [[ -f "\${SOURCE_DIR}/schemas/skill.schema.json" ]]; then
-            cp "\${SOURCE_DIR}/schemas/skill.schema.json" "\${PACKAGE_DIR}/schemas/"
+          if [[ -d "\${SOURCE_DIR}/schemas" ]]; then
+            cp -r "\${SOURCE_DIR}/schemas/." "\${PACKAGE_DIR}/schemas/"
           fi
           echo "dir=\${PACKAGE_DIR}" >> "\$GITHUB_OUTPUT"`;
 }
 
-function buildVersionResolutionStep(trigger) {
+function buildVersionResolutionStep(trigger, skillDir) {
+  const skillJsonPath =
+    skillDir === '.' ? './skill.json' : `./${toPosix(path.posix.join(skillDir, 'skill.json'))}`;
   const body =
     trigger === 'release'
       ? `          RELEASE_TAG="\${{ github.event.release.tag_name }}"
           if [[ -n "\${RELEASE_TAG}" ]]; then
             RESOLVED_VERSION="\${RELEASE_TAG#v}"
           else
-            RESOLVED_VERSION="$(node -p "require('./package.json').version")"
+            RESOLVED_VERSION="$(node -p "require('${skillJsonPath}').version")"
           fi`
       : `          VERSION_INPUT="\${{ inputs.version }}"
           if [[ -n "\${VERSION_INPUT}" ]]; then
             RESOLVED_VERSION="\${VERSION_INPUT}"
           else
-            RESOLVED_VERSION="$(node -p "require('./package.json').version")"
+            RESOLVED_VERSION="$(node -p "require('${skillJsonPath}').version")"
           fi`;
 
   return `      - name: Resolve publish version
@@ -254,7 +252,7 @@ jobs:
     steps:
       - uses: ${PINNED_CHECKOUT_ACTION_REF}
 ${buildPrepareSkillPackageStep(skillDir)}
-${buildVersionResolutionStep('release')}
+${buildVersionResolutionStep('release', skillDir)}
       - name: Publish skill package
         uses: ${PINNED_SKILL_PUBLISH_ACTION_REF}
         with:
@@ -304,7 +302,7 @@ jobs:
             echo "api_base_url=https://hol.org/registry/api/v1" >> "\$GITHUB_OUTPUT"
           fi
 ${buildPrepareSkillPackageStep(skillDir)}
-${buildVersionResolutionStep('manual')}
+${buildVersionResolutionStep('manual', skillDir)}
       - name: Publish skill package
         uses: ${PINNED_SKILL_PUBLISH_ACTION_REF}
         with:

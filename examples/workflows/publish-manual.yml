@@ -72,7 +72,7 @@ jobs:
           if [[ -n "${VERSION_INPUT}" ]]; then
             RESOLVED_VERSION="${VERSION_INPUT}"
           else
-            RESOLVED_VERSION="$(node -p "require('./package.json').version")"
+            RESOLVED_VERSION="$(node -p "require('./skills/my-skill/skill.json').version")"
           fi
           echo "version=${RESOLVED_VERSION}" >> "$GITHUB_OUTPUT"
       - name: Publish skill package
