@@ -1,6 +1,6 @@
 # skill-publish
 
-| ![Hashgraph Online Logo](https://raw.githubusercontent.com/hashgraph-online/standards-sdk/b5be8d9b59eed13ee3ea174d8f0e75293793faad/Hashgraph-Online.png) | The official **skill-publish** CLI and GitHub Action for validating, quoting, and publishing trustless, immutable, on-chain skill releases through the HOL Registry Broker.<br><br>Built and maintained by [Hashgraph Online](https://hol.org).<br><br>[npm Package](https://www.npmjs.com/package/skill-publish)<br>[GitHub Marketplace](https://github.com/marketplace/actions/skill-publish)<br>[HOL Registry](https://hol.org/registry) |
+| ![Hashgraph Online Logo](https://raw.githubusercontent.com/hashgraph-online/standards-sdk/b5be8d9b59eed13ee3ea174d8f0e75293793faad/Hashgraph-Online.png) | The official **skill-publish** CLI and GitHub Action for validating, quoting, and publishing trustless, immutable, on-chain skill releases through the HOL Registry Broker.<br><br>Built and maintained by [Hashgraph Online](https://hol.org).<br><br>[npm Package](https://www.npmjs.com/package/skill-publish)<br>[GitHub Marketplace](https://github.com/marketplace/actions/skill-publish)<br>[HOL Registry](https://hol.org/registry)<br>[DeepWiki Wiki](https://deepwiki.com/hashgraph-online/skill-publish) |
 | :--- | :--- |
 
 Instead of sharing mutable URLs or copy/paste blobs, each `name@version` release is recorded on Hedera (HCS) and exposed via `hcs://...` references. That immutability is the value: the published artifact is tamper-evident, reproducible, and audit-friendly.
@@ -19,6 +19,7 @@ By default, `skill-publish` excludes hidden files and directories, env files, lo
 [![GitHub Marketplace](https://img.shields.io/badge/GitHub_Marketplace-skill--publish-2EA44F?style=for-the-badge&logo=github)](https://github.com/marketplace/actions/skill-publish)
 [![OpenAPI Spec](https://img.shields.io/badge/OpenAPI-3.1.0-6BA539?style=for-the-badge&logo=openapiinitiative&logoColor=white)](https://hol.org/registry/api/v1/openapi.json)
 [![HOL Registry](https://img.shields.io/badge/HOL-Registry-5599FE?style=for-the-badge)](https://hol.org/registry)
+[![DeepWiki](https://img.shields.io/badge/DeepWiki-Wiki-0F172A?style=for-the-badge&logo=bookstack&logoColor=white)](https://deepwiki.com/hashgraph-online/skill-publish)
 
 ## Quick Start
 
