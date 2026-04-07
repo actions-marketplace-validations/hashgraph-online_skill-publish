@@ -239,6 +239,16 @@ try {
     'Validate workflow must call skill-publish in validate mode.',
   );
   assert.equal(
+    validateWorkflow.includes('issues: write'),
+    true,
+    'Validate workflow must permit managed PR comment updates.',
+  );
+  assert.equal(
+    validateWorkflow.includes('pull-requests: write'),
+    true,
+    'Validate workflow must permit managed PR comment updates.',
+  );
+  assert.equal(
     validateWorkflow.includes('Prepare skill package'),
     true,
     'Validate workflow must stage a canonical package before validation.',
@@ -249,8 +259,18 @@ try {
     'Validate workflow must disable preview upload by default.',
   );
   assert.equal(
+    validateWorkflow.includes('github-token: ${{ github.token }}'),
+    true,
+    'Validate workflow must pass the GitHub token through so the action can update a single managed PR comment.',
+  );
+  assert.equal(
+    validateWorkflow.includes('comment-mode: "state-changes"'),
+    true,
+    'Validate workflow must publish scorecard comments in low-noise state-change mode.',
+  );
+  assert.equal(
     validateWorkflow.includes(
-      'hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d',
+      'hashgraph-online/skill-publish@9742f4cab7ca48683d39dcd16f92ec7dfe565df7',
     ),
     true,
     'Validate workflow must pin the skill-publish action to an immutable commit SHA.',
@@ -295,6 +315,16 @@ try {
     'Scaffolded validate workflow must disable preview upload by default.',
   );
   assert.equal(
+    scaffoldedValidateWorkflow.includes('github-token: ${{ github.token }}'),
+    true,
+    'Scaffolded validate workflow must pass the GitHub token through for managed PR comments.',
+  );
+  assert.equal(
+    scaffoldedValidateWorkflow.includes('comment-mode: "state-changes"'),
+    true,
+    'Scaffolded validate workflow must enable low-noise scorecard comment updates.',
+  );
+  assert.equal(
     scaffoldedValidateWorkflow.includes('Prepare skill package'),
     true,
     'Scaffolded validate workflow must stage a canonical package before validation.',
@@ -308,7 +338,7 @@ try {
   );
   assert.equal(
     scaffoldedValidateWorkflow.includes(
-      'hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d',
+      'hashgraph-online/skill-publish@9742f4cab7ca48683d39dcd16f92ec7dfe565df7',
     ),
     true,
     'Scaffolded validate workflow must pin skill-publish to an immutable commit SHA.',
@@ -346,7 +376,7 @@ try {
   );
   assert.equal(
     publishMonorepoWorkflow.includes(
-      'hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d',
+      'hashgraph-online/skill-publish@9742f4cab7ca48683d39dcd16f92ec7dfe565df7',
     ),
     true,
     'Monorepo example must pin the skill-publish action to an immutable commit SHA.',

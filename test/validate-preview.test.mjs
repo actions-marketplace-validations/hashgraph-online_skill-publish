@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -65,7 +65,15 @@ async function runActionMode(fixtureName, mode, options = {}) {
   const githubSummaryPath = path.join(runtimeRoot, 'github-summary.md');
   const githubEventPath = path.join(runtimeRoot, 'github-event.json');
   await mkdir(runtimeRoot, { recursive: true });
-  const skillDir = path.join(fixtureRoot, fixtureName);
+  let skillDir = path.join(fixtureRoot, fixtureName);
+  if (options.packageInRuntime) {
+    const packageDir = path.join(
+      runtimeRoot,
+      `publish-package-${fixtureName}-${Math.random().toString(36).slice(2, 8)}`,
+    );
+    await cp(skillDir, packageDir, { recursive: true });
+    skillDir = packageDir;
+  }
   if (options.eventPayload) {
     await writeFile(
       githubEventPath,
@@ -147,6 +155,8 @@ assert.equal(githubOutput.get('status-url'), '');
 const previewUploadRequests = [];
 const quotePreviewRequests = [];
 const managedCommentRequests = [];
+const managedCommentUpdates = [];
+const storedManagedComments = [];
 const oidcServer = await listenServer(async (request, response) => {
   const body = await new Promise((resolve) => {
     let chunks = '';
@@ -217,11 +227,48 @@ const oidcServer = await listenServer(async (request, response) => {
   ) {
     if (request.method === 'GET') {
       response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(JSON.stringify([]));
+      response.end(JSON.stringify(storedManagedComments));
       return;
     }
     if (request.method === 'POST') {
-      managedCommentRequests.push(body ? JSON.parse(body) : null);
+      const payload = body ? JSON.parse(body) : null;
+      managedCommentRequests.push(payload);
+      storedManagedComments.splice(
+        0,
+        storedManagedComments.length,
+        {
+          id: 501,
+          body: payload?.body ?? '',
+          html_url:
+            'https://github.com/hashgraph-online/valid-skill/pull/5#issuecomment-501',
+        },
+      );
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          id: 501,
+          html_url:
+            'https://github.com/hashgraph-online/valid-skill/pull/5#issuecomment-501',
+        }),
+      );
+      return;
+    }
+  }
+
+  if (request.url === '/repos/hashgraph-online/valid-skill/issues/comments/501') {
+    if (request.method === 'PATCH') {
+      const payload = body ? JSON.parse(body) : null;
+      managedCommentUpdates.push(payload);
+      storedManagedComments.splice(
+        0,
+        storedManagedComments.length,
+        {
+          id: 501,
+          body: payload?.body ?? '',
+          html_url:
+            'https://github.com/hashgraph-online/valid-skill/pull/5#issuecomment-501',
+        },
+      );
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(
         JSON.stringify({
@@ -315,7 +362,61 @@ assert.equal(
 assert.equal(managedCommentRequests.length, 1);
 assert.match(
   managedCommentRequests[0]?.body ?? '',
-  /HOL skill lifecycle/u,
+  /## HOL skill scorecard/u,
+);
+assert.match(
+  managedCommentRequests[0]?.body ?? '',
+  /\| HCS-28 total \| Trust tier \| Publish readiness \|/u,
+);
+assert.match(
+  managedCommentRequests[0]?.body ?? '',
+  /\*\*Recommended next step:\*\*/u,
+);
+assert.doesNotMatch(
+  managedCommentRequests[0]?.body ?? '',
+  /### Links/u,
+);
+
+const dedupeRun = await runActionMode('valid-skill', 'validate', {
+  apiBaseUrl: `${oidcServer.baseUrl}/api/v1`,
+  previewUpload: 'false',
+  packageInRuntime: true,
+  githubApiUrl: oidcServer.baseUrl,
+  eventPayload: {
+    pull_request: {
+      number: 5,
+    },
+  },
+  extraEnv: {
+    INPUT_COMMENT_MODE: 'always',
+    INPUT_GITHUB_TOKEN: 'ghs_test_token',
+  },
+});
+assert.equal(
+  dedupeRun.error,
+  undefined,
+  dedupeRun.error?.stderr ?? dedupeRun.error?.message,
+);
+const dedupeOutput = parseGithubOutput(
+  await readFile(dedupeRun.githubOutputPath, 'utf8'),
+);
+assert.equal(
+  dedupeOutput.get('managed-comment-url'),
+  'https://github.com/hashgraph-online/valid-skill/pull/5#issuecomment-501',
+);
+assert.equal(
+  managedCommentRequests.length,
+  1,
+  'A rerun for the same PR and skill should update the managed comment instead of creating a new one.',
+);
+assert.equal(managedCommentUpdates.length, 1);
+assert.match(
+  managedCommentUpdates[0]?.body ?? '',
+  /## HOL skill scorecard/u,
+);
+assert.doesNotMatch(
+  managedCommentUpdates[0]?.body ?? '',
+  /### Links/u,
 );
 
 const missingSkillMdRun = await runActionMode('missing-skill-md', 'validate');
@@ -353,6 +454,7 @@ await rm(uploadedRun.runtimeRoot, { recursive: true, force: true });
 await rm(monitorRun.runtimeRoot, { recursive: true, force: true });
 await rm(quotePreviewRun.runtimeRoot, { recursive: true, force: true });
 await rm(managedCommentRun.runtimeRoot, { recursive: true, force: true });
+await rm(dedupeRun.runtimeRoot, { recursive: true, force: true });
 if (missingSkillMdRun.runtimeRoot) {
   await rm(missingSkillMdRun.runtimeRoot, { recursive: true, force: true });
 }

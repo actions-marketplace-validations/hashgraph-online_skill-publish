@@ -5,7 +5,7 @@ import path from 'node:path';
 export const PINNED_CHECKOUT_ACTION_REF =
   'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683';
 export const PINNED_SKILL_PUBLISH_ACTION_REF =
-  'hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d';
+  'hashgraph-online/skill-publish@9742f4cab7ca48683d39dcd16f92ec7dfe565df7';
 
 const REQUIRED_SKILL_FILES = ['SKILL.md'];
 const OPTIONAL_SKILL_FILES = ['skill.json', 'apis.json', 'llms.txt'];
@@ -342,6 +342,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      issues: write
+      pull-requests: write
     steps:
       - uses: ${PINNED_CHECKOUT_ACTION_REF}
 ${buildPrepareSkillPackageStep(skillDir)}
@@ -352,5 +354,8 @@ ${buildPrepareSkillPackageStep(skillDir)}
           skill-dir: \${{ steps.package.outputs.dir }}
           annotate: "false"
           preview-upload: "false"
+          github-token: \${{ github.token }}
+          comment-mode: "state-changes"
+          comment-on-success: "true"
 `;
 }
