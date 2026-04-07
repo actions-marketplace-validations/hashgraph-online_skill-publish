@@ -119,6 +119,8 @@ assert.equal(githubOutput.get('skill-version'), '1.0.0');
 assert.ok(githubOutput.has('preview-json'));
 assert.ok(githubOutput.has('preview-json-path'));
 assert.ok(githubOutput.has('next-actions'));
+assert.ok(githubOutput.has('hcs28-json'));
+assert.ok(githubOutput.has('hcs28-score-total'));
 assert.equal(githubOutput.get('trust-tier'), 'validated');
 assert.equal(githubOutput.get('publish-readiness'), 'ready');
 assert.equal(githubOutput.get('missing-requirements'), '[]');
@@ -130,6 +132,9 @@ assert.ok(previewJsonPath);
 const previewJsonOnDisk = JSON.parse(await readFile(previewJsonPath, 'utf8'));
 assert.equal(previewJson.schema_version, 'skill-preview.v1');
 assert.match(previewJson.preview_id, /^preview_[a-f0-9]{32}$/u);
+assert.equal(previewJson.hcs_28?.profile?.id, 'hcs-28/baseline');
+assert.equal(previewJson.hcs_28?.profile?.version, '0.1');
+assert.ok(typeof previewJson.hcs_28?.trustScores?.total === 'number');
 assert.equal(
   previewJson.workflow_run_url,
   'https://github.com/hashgraph-online/valid-skill/actions',

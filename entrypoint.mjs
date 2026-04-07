@@ -11,6 +11,7 @@ import {
   uploadSkillPreviewFromGithubOidc,
 } from './bin/lib/broker-api.mjs';
 import { buildDistributionKit, normalizeApiBaseUrl } from './bin/lib/distribution-kit.mjs';
+import { buildHcs28Fallback, computeHcs28TrustPreview } from './bin/lib/hcs-28.mjs';
 import { submitToIndexNow } from './bin/lib/indexnow.mjs';
 import { discoverSkillPackageFiles } from './bin/lib/package-files.mjs';
 import { writeSkillPreviewReport } from './bin/lib/preview-output.mjs';
@@ -427,6 +428,53 @@ const tryFetchStatusByRepo = async (params) => {
   }
 };
 
+const tryFetchPublishedSkill = async (params) => {
+  if (!params.skillName || !params.skillVersion) {
+    return null;
+  }
+  try {
+    return await findExistingSkillVersion({
+      apiBaseUrl: params.apiBaseUrl,
+      apiKey: '',
+      accountId: '',
+      name: params.skillName,
+      version: params.skillVersion,
+    });
+  } catch {
+    return null;
+  }
+};
+
+const tryListRepoCandidates = async (params) => {
+  if (!params.repoUrl) {
+    return [];
+  }
+  try {
+    const response = await executeWithRetry({
+      label: 'GET /skills',
+      attempts: 1,
+      operation: () =>
+        listSkillReleases({
+          baseUrl: params.apiBaseUrl,
+          query: {
+            limit: 50,
+          },
+        }),
+    });
+    const items = Array.isArray(response?.items) ? response.items : [];
+    const repos = items
+      .map((item) =>
+        item && typeof item === 'object' && !Array.isArray(item) && typeof item.repo === 'string'
+          ? item.repo.trim()
+          : '',
+      )
+      .filter(Boolean);
+    return [...new Set([params.repoUrl, ...repos])];
+  } catch {
+    return params.repoUrl ? [params.repoUrl] : [];
+  }
+};
+
 const tryFetchQuotePreview = async (params) => {
   if (!params.shouldRequestQuotePreview) {
     return null;
@@ -486,6 +534,8 @@ const resolvePublishReadiness = (missingRequirements) =>
 
 const setLifecycleOutputs = async (params) => {
   await setActionOutput('preview-json', params.previewJson ?? '');
+  await setActionOutput('hcs28-json', params.hcs28Json ?? '');
+  await setActionOutput('hcs28-score-total', params.hcs28ScoreTotal ?? '');
   await setActionOutput('preview-json-path', params.previewJsonPath ?? '');
   await setActionOutput('status-url', params.statusUrl ?? '');
   await setActionOutput('trust-tier', params.trustTier ?? '');
@@ -939,6 +989,8 @@ const run = async () => {
       await setActionOutput('skill-name', result.skillName);
       await setActionOutput('skill-version', result.skillVersion);
       await setActionOutput('preview-json', '');
+      await setActionOutput('hcs28-json', '');
+      await setActionOutput('hcs28-score-total', '');
       await setActionOutput('preview-json-path', '');
       await setActionOutput('status-url', result.distribution.urls.skillPageUrl);
       await setActionOutput('quote-id', '');
@@ -1075,6 +1127,18 @@ const run = async () => {
     const eventPayload = await parseEventPayload();
     const generatedAt = new Date().toISOString();
     const toolVersion = await getToolVersion();
+    const previewFiles = files.map((file) => ({
+      ...file,
+      sizeBytes: Buffer.byteLength(file.base64, 'base64'),
+    }));
+    const publishedSkill =
+      mode === 'monitor'
+        ? await tryFetchPublishedSkill({
+            apiBaseUrl,
+            skillName,
+            skillVersion,
+          })
+        : null;
     const previewReport = buildSkillPreviewReport({
       toolVersion,
       repository,
@@ -1088,18 +1152,10 @@ const run = async () => {
       skillVersion,
       generatedAt,
       eventPayload,
-      files: files.map((file) => ({
-        ...file,
-        sizeBytes: Buffer.byteLength(file.base64, 'base64'),
-      })),
+      files: previewFiles,
       excludedFiles,
       totalBytes,
     });
-    const previewJsonPath = await writeSkillPreviewReport({
-      workspaceDir: process.cwd(),
-      report: previewReport,
-    });
-    const previewJson = JSON.stringify(previewReport, null, 2);
     const previewUploadResult = shouldUploadPreview
       ? await uploadPreviewRecord({
           apiBaseUrl,
@@ -1118,6 +1174,97 @@ const run = async () => {
             ref: githubRef,
           })
         : null;
+    const repoCandidates =
+      mode === 'monitor'
+        ? await tryListRepoCandidates({
+            apiBaseUrl,
+            repoUrl,
+          })
+        : repoUrl
+          ? [repoUrl]
+          : [];
+    const hcs28BaseParams = {
+      mode,
+      includeExternal: mode === 'monitor',
+      computedAt: generatedAt,
+      githubToken: githubToken || getEnv('GITHUB_TOKEN'),
+      packageState: {
+        skillName,
+        skillVersion,
+        skillDescription: parsedSkillJson?.description,
+        repoUrl,
+        commitSha,
+        homepage: parsedSkillJson?.homepage,
+        tags: Array.isArray(parsedSkillJson?.tags) ? parsedSkillJson.tags : [],
+        languages: Array.isArray(parsedSkillJson?.languages) ? parsedSkillJson.languages : [],
+        category: parsedSkillJson?.category,
+        files: previewReport.package_summary.included_files,
+      },
+      publishedSkill: {
+        ...(publishedSkill && typeof publishedSkill === 'object' ? publishedSkill : {}),
+        verificationSignals: {
+          ...(
+            publishedSkill?.verificationSignals &&
+            typeof publishedSkill.verificationSignals === 'object' &&
+            !Array.isArray(publishedSkill.verificationSignals)
+              ? publishedSkill.verificationSignals
+              : {}
+          ),
+          publisherBound:
+            publishedSkill?.verificationSignals?.publisherBound ??
+            statusByRepo?.verificationSignals?.publisherBound ??
+            null,
+          repoCommitIntegrity:
+            publishedSkill?.verificationSignals?.repoCommitIntegrity ??
+            statusByRepo?.provenanceSignals?.repoCommitIntegrity ??
+            null,
+          manifestIntegrity:
+            publishedSkill?.verificationSignals?.manifestIntegrity ??
+            statusByRepo?.provenanceSignals?.manifestIntegrity ??
+            null,
+          domainProof:
+            publishedSkill?.verificationSignals?.domainProof ??
+            statusByRepo?.verificationSignals?.domainProof ??
+            null,
+        },
+        repo: publishedSkill?.repo ?? repoUrl,
+        commit: publishedSkill?.commit ?? commitSha,
+        homepage: publishedSkill?.homepage ?? parsedSkillJson?.homepage,
+      },
+      repoCandidates,
+    };
+    const hcs28 = await computeHcs28TrustPreview(hcs28BaseParams).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      stderr(`HCS-28 scoring failed: ${message}`);
+      return buildHcs28Fallback({
+        ...hcs28BaseParams,
+        errorMessage: message,
+      });
+    });
+    const previewReportWithHcs28 = buildSkillPreviewReport({
+      ...previewReport,
+      toolVersion,
+      repository,
+      repoUrl,
+      commitSha,
+      ref: githubRef,
+      eventName,
+      workflowRunUrl: getWorkflowRunUrl(),
+      skillDir: skillDirInput,
+      skillName,
+      skillVersion,
+      generatedAt,
+      eventPayload,
+      files: previewFiles,
+      excludedFiles,
+      totalBytes,
+      hcs28,
+    });
+    const previewJsonPath = await writeSkillPreviewReport({
+      workspaceDir: process.cwd(),
+      report: previewReportWithHcs28,
+    });
+    const previewJson = JSON.stringify(previewReportWithHcs28, null, 2);
     const quotePreview = await tryFetchQuotePreview({
       shouldRequestQuotePreview,
       apiBaseUrl,
@@ -1137,12 +1284,18 @@ const run = async () => {
     const trustTier =
       brokerTrustTier && brokerTrustTier !== 'unclaimed'
         ? brokerTrustTier
-        : 'validated';
+        : publishedSkill
+          ? publishedSkill.verified === true
+            ? 'verified'
+            : 'published'
+          : 'validated';
     const publishReadiness = resolvePublishReadiness(missingRequirements);
-    const statusUrl = String(
+    const fallbackStatusUrl =
       statusByRepo?.statusUrl ??
-        previewUploadResult?.statusUrl ??
-        '',
+      previewUploadResult?.statusUrl ??
+      '';
+    const statusUrl = String(
+      (publishedSkill ? distribution.urls.skillPageUrl : '') || fallbackStatusUrl,
     );
     const purchaseUrl = String(
       quotePreview?.purchaseUrl ??
@@ -1193,13 +1346,14 @@ const run = async () => {
       purchaseUrl,
       publishUrl,
       verificationUrl,
-      nextActions: previewReport.suggested_next_steps.map((step) => step.label),
+      nextActions: previewReportWithHcs28.suggested_next_steps.map((step) => step.label),
     }).catch((error) => {
       stderr(`Managed comment update failed: ${error instanceof Error ? error.message : String(error)}`);
       return '';
     });
     validationResult.distribution = distribution;
-    validationResult.previewReport = previewReport;
+    validationResult.previewReport = previewReportWithHcs28;
+    validationResult.hcs28 = hcs28;
     validationResult.trustTier = trustTier;
     validationResult.publishReadiness = publishReadiness;
     validationResult.missingRequirements = missingRequirements;
@@ -1208,7 +1362,9 @@ const run = async () => {
     await setActionOutput('skip-reason', 'validation-only');
     await setActionOutput('skill-name', skillName);
     await setActionOutput('skill-version', skillVersion);
-    await setActionOutput('preview-json', JSON.stringify(previewReport, null, 2));
+    await setActionOutput('preview-json', previewJson);
+    await setActionOutput('hcs28-json', JSON.stringify(hcs28, null, 2));
+    await setActionOutput('hcs28-score-total', String(hcs28.trustScores.total));
     await setActionOutput('preview-json-path', previewJsonPath);
     await setActionOutput('status-url', statusUrl);
     await setActionOutput('quote-id', '');
@@ -1223,6 +1379,8 @@ const run = async () => {
     await setDistributionOutputs(distribution);
     await setLifecycleOutputs({
       previewJson,
+      hcs28Json: JSON.stringify(hcs28, null, 2),
+      hcs28ScoreTotal: String(hcs28.trustScores.total),
       previewJsonPath,
       statusUrl,
       trustTier,
@@ -1241,18 +1399,19 @@ const run = async () => {
         '',
         `- Skill: \`${skillName}@${skillVersion}\``,
         `- Trust tier: \`${trustTier}\``,
+        `- HCS-28 total: \`${hcs28.trustScores.total}\``,
         `- Publish readiness: \`${publishReadiness}\``,
         `- Missing requirements: \`${missingRequirements.length}\``,
         statusUrl ? `- Status page: ${statusUrl}` : '- Status page: not available yet',
         '',
-        formatPreviewNextActions(previewReport),
+        formatPreviewNextActions(previewReportWithHcs28),
       ].join('\n'),
     );
     if (jsonOutput) {
       printJson({
         ...validationResult,
         preview: {
-          report: previewReport,
+          report: previewReportWithHcs28,
           path: previewJsonPath,
           statusUrl,
         },
@@ -1304,6 +1463,8 @@ const run = async () => {
     await setActionOutput('skill-name', skillName);
     await setActionOutput('skill-version', skillVersion);
     await setActionOutput('preview-json', '');
+    await setActionOutput('hcs28-json', '');
+    await setActionOutput('hcs28-score-total', '');
     await setActionOutput('preview-json-path', '');
     await setActionOutput('status-url', distribution.urls.skillPageUrl);
     await setActionOutput('quote-id', quoteId);
@@ -1430,6 +1591,8 @@ const run = async () => {
   await setActionOutput('skill-name', result.skillName);
   await setActionOutput('skill-version', result.skillVersion);
   await setActionOutput('preview-json', '');
+  await setActionOutput('hcs28-json', '');
+  await setActionOutput('hcs28-score-total', '');
   await setActionOutput('preview-json-path', '');
   await setActionOutput('status-url', result.distribution.urls.skillPageUrl);
   await setActionOutput('quote-id', result.quoteId);
@@ -1481,6 +1644,8 @@ run().catch(async error => {
   const outputPath = getEnv('GITHUB_OUTPUT');
   if (outputPath) {
     await setActionOutput('preview-json', '');
+    await setActionOutput('hcs28-json', '');
+    await setActionOutput('hcs28-score-total', '');
     await setActionOutput('preview-json-path', '');
     await setActionOutput('status-url', '');
     await setActionOutput('annotation-target', 'failed');

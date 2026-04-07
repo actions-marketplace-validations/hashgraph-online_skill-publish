@@ -111,6 +111,7 @@ export function buildSkillPreviewReport(params) {
     validation_status: 'passed',
     findings: [],
     package_summary: buildPackageSummary(params),
+    hcs_28: params.hcs28 ?? null,
     suggested_next_steps: buildSuggestedNextSteps(),
     generated_at: params.generatedAt,
   };

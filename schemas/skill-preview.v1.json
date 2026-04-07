@@ -78,6 +78,59 @@
     "package_summary": {
       "type": "object"
     },
+    "hcs_28": {
+      "type": ["object", "null"],
+      "required": ["profile", "execution", "trustScores"],
+      "properties": {
+        "subject": {
+          "type": "object"
+        },
+        "profile": {
+          "type": "object",
+          "required": ["id", "version"],
+          "properties": {
+            "id": {
+              "type": "string",
+              "const": "hcs-28/baseline"
+            },
+            "version": {
+              "type": "string",
+              "const": "0.1"
+            }
+          },
+          "additionalProperties": true
+        },
+        "execution": {
+          "type": "object",
+          "required": ["includeExternal", "computedAt"],
+          "properties": {
+            "includeExternal": {
+              "type": "boolean"
+            },
+            "computedAt": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        },
+        "trustScores": {
+          "type": "object",
+          "required": ["total"],
+          "properties": {
+            "total": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "evidence": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
     "suggested_next_steps": {
       "type": "array"
     },
