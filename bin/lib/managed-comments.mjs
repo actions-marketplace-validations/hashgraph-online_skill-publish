@@ -100,17 +100,30 @@ const formatSignalStatus = (params) => {
   return score >= 100 ? 'Passed' : 'In progress';
 };
 
+const appendQueryParam = (rawUrl, key, value) => {
+  const normalized = String(rawUrl ?? '').trim();
+  if (!normalized) {
+    return '';
+  }
+  try {
+    const url = new URL(normalized);
+    url.searchParams.set(key, value);
+    return url.toString();
+  } catch {
+    return normalized;
+  }
+};
+
 const buildImprovementTips = (params) => {
   const tips = [];
   const domainProofScore = readScore(params.hcs28, 'verification.domain-proof.score');
   const repoIntegrityScore = readScore(params.hcs28, 'verification.repo-commit-integrity.score');
   const manifestIntegrityScore = readScore(params.hcs28, 'verification.manifest-integrity.score');
   const ciscoScore = readScore(params.hcs28, 'safety.cisco-scan.score');
+  const repositoryHealthScore = readScore(params.hcs28, 'repository.health.score');
   const submitUrl = String(params.submitUrl || params.purchaseUrl || DEFAULT_SUBMIT_URL).trim();
   const publishGuideUrl = String(params.publishUrl || DEFAULT_SUBMIT_URL).trim();
-  const securityUrl = String(
-    params.statusUrl ? `${params.statusUrl}${params.statusUrl.includes('?') ? '&' : '?'}tab=security-breakdown` : '',
-  ).trim();
+  const securityUrl = appendQueryParam(params.statusUrl, 'tab', 'security-breakdown');
 
   if (domainProofScore !== null && domainProofScore < 100) {
     tips.push(
@@ -131,6 +144,12 @@ const buildImprovementTips = (params) => {
     const securityTarget = securityUrl || params.statusUrl || publishGuideUrl;
     tips.push(
       `- Cisco safety scan: review ${formatLink('the security breakdown', securityTarget)} and harden the flagged files before the next publish.`,
+    );
+  }
+  if (repositoryHealthScore !== null && repositoryHealthScore < 80) {
+    const statusTarget = String(params.statusUrl || submitUrl || publishGuideUrl).trim();
+    tips.push(
+      `- Repository health: clean up stale metadata, docs, and workflow drift, then re-run validate so HOL can rescore the repository signals from ${formatLink('the status page', statusTarget)}.`,
     );
   }
 
