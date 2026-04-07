@@ -342,6 +342,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      issues: write
+      pull-requests: write
     steps:
       - uses: ${PINNED_CHECKOUT_ACTION_REF}
 ${buildPrepareSkillPackageStep(skillDir)}
@@ -352,5 +354,8 @@ ${buildPrepareSkillPackageStep(skillDir)}
           skill-dir: \${{ steps.package.outputs.dir }}
           annotate: "false"
           preview-upload: "false"
+          github-token: \${{ github.token }}
+          comment-mode: "state-changes"
+          comment-on-success: "true"
 `;
 }

@@ -315,7 +315,15 @@ assert.equal(
 assert.equal(managedCommentRequests.length, 1);
 assert.match(
   managedCommentRequests[0]?.body ?? '',
-  /HOL skill lifecycle/u,
+  /## HOL skill scorecard/u,
+);
+assert.match(
+  managedCommentRequests[0]?.body ?? '',
+  /\| HCS-28 total \| Trust tier \| Publish readiness \|/u,
+);
+assert.match(
+  managedCommentRequests[0]?.body ?? '',
+  /\*\*Recommended next step:\*\*/u,
 );
 
 const missingSkillMdRun = await runActionMode('missing-skill-md', 'validate');

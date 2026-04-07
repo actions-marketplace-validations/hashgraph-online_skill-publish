@@ -1323,6 +1323,7 @@ const run = async () => {
       missingRequirements,
       estimatedCreditsRange,
       statusUrl,
+      hcs28,
     });
     const marker = buildManagedCommentMarker(groupKey);
     const managedCommentUrl = await syncManagedComment({
@@ -1346,7 +1347,8 @@ const run = async () => {
       purchaseUrl,
       publishUrl,
       verificationUrl,
-      nextActions: previewReportWithHcs28.suggested_next_steps.map((step) => step.label),
+      nextActions: previewReportWithHcs28.suggested_next_steps,
+      hcs28,
     }).catch((error) => {
       stderr(`Managed comment update failed: ${error instanceof Error ? error.message : String(error)}`);
       return '';

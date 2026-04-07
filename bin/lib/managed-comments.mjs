@@ -15,6 +15,13 @@ export function buildManagedCommentStateSignature(params) {
       : [],
     estimatedCreditsRange: params.estimatedCreditsRange ?? '',
     statusUrl: params.statusUrl ?? '',
+    hcs28Total:
+      params.hcs28 &&
+      typeof params.hcs28 === 'object' &&
+      params.hcs28.trustScores &&
+      typeof params.hcs28.trustScores.total === 'number'
+        ? params.hcs28.trustScores.total
+        : '',
   });
 }
 
@@ -45,40 +52,161 @@ export function shouldPublishManagedComment(params) {
   return false;
 }
 
+const readScore = (hcs28, key) => {
+  const value = hcs28?.trustScores?.[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+};
+
+const formatScore = (value) => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 'n/a';
+  }
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+};
+
+const formatSignalStatus = (params) => {
+  const { key, score } = params;
+  if (score === null) {
+    return 'Pending';
+  }
+  if (key === 'verification.domain-proof.score') {
+    return score >= 100 ? 'Verified' : 'Add TXT proof';
+  }
+  if (key === 'verification.manifest-integrity.score') {
+    return score >= 100 ? 'Pinned' : 'Republish package';
+  }
+  if (key === 'verification.repo-commit-integrity.score') {
+    return score >= 100 ? 'Bound to repo' : 'Align repo commit';
+  }
+  if (key === 'safety.cisco-scan.score') {
+    if (score >= 90) {
+      return 'Strong';
+    }
+    if (score >= 70) {
+      return 'Review findings';
+    }
+    return 'Needs hardening';
+  }
+  if (key === 'repository.health.score') {
+    if (score >= 80) {
+      return 'Healthy';
+    }
+    if (score >= 60) {
+      return 'Watchlist';
+    }
+    return 'Needs cleanup';
+  }
+  return score >= 100 ? 'Passed' : 'In progress';
+};
+
+const buildSignalRows = (hcs28) => {
+  const signals = [
+    ['Domain proof', 'verification.domain-proof.score'],
+    ['Manifest integrity', 'verification.manifest-integrity.score'],
+    ['Repo + commit integrity', 'verification.repo-commit-integrity.score'],
+    ['Cisco safety scan', 'safety.cisco-scan.score'],
+    ['Repository health', 'repository.health.score'],
+  ];
+  return signals.map(([label, key]) => {
+    const score = readScore(hcs28, key);
+    return `| ${label} | ${formatScore(score)} | ${formatSignalStatus({ key, score })} |`;
+  });
+};
+
+const formatLink = (label, href) => {
+  const normalizedHref = String(href ?? '').trim();
+  return normalizedHref ? `[${label}](${normalizedHref})` : label;
+};
+
+const normalizeNextAction = (action) => {
+  if (typeof action === 'string') {
+    const trimmed = action.trim();
+    return trimmed
+      ? {
+          label: trimmed,
+          description: '',
+          href: '',
+        }
+      : null;
+  }
+  if (action && typeof action === 'object' && !Array.isArray(action)) {
+    const label = String(action.label ?? '').trim();
+    if (!label) {
+      return null;
+    }
+    return {
+      label,
+      description: String(action.description ?? '').trim(),
+      href: String(action.href ?? action.url ?? '').trim(),
+    };
+  }
+  return null;
+};
+
 export function buildManagedCommentBody(params) {
+  const nextActions = Array.isArray(params.nextActions)
+    ? params.nextActions.map(normalizeNextAction).filter(Boolean)
+    : [];
+  const totalScore = readScore(params.hcs28, 'total');
   const lines = [];
   lines.push(params.marker);
   lines.push(`<!-- skill-publish-state:${params.stateSignature} -->`);
-  lines.push('### HOL skill lifecycle');
+  lines.push('## HOL skill scorecard');
   lines.push('');
-  lines.push(`- Mode: \`${params.mode}\``);
-  lines.push(`- Skill: \`${params.skillName}@${params.skillVersion}\``);
-  lines.push(`- Trust tier: \`${params.trustTier}\``);
-  lines.push(`- Publish readiness: \`${params.publishReadiness}\``);
+  lines.push(
+    `> \`${params.skillName}@${params.skillVersion}\` checked in \`${params.mode}\` mode.`,
+  );
+  lines.push('');
+  lines.push('| HCS-28 total | Trust tier | Publish readiness |');
+  lines.push('| --- | --- | --- |');
+  lines.push(
+    `| ${formatScore(totalScore)} | \`${params.trustTier}\` | \`${params.publishReadiness}\` |`,
+  );
   if (Array.isArray(params.missingRequirements) && params.missingRequirements.length > 0) {
-    lines.push(`- Missing requirements: \`${params.missingRequirements.join(', ')}\``);
+    lines.push('');
+    lines.push(`**Missing requirements:** \`${params.missingRequirements.join(', ')}\``);
   }
   if (params.estimatedCreditsRange) {
-    lines.push(`- Estimated credits: \`${params.estimatedCreditsRange}\``);
+    lines.push(`**Estimated credits:** \`${params.estimatedCreditsRange}\``);
   }
   lines.push('');
+  lines.push('### Signal breakdown');
+  lines.push('');
+  lines.push('| Signal | Score | Status |');
+  lines.push('| --- | --- | --- |');
+  lines.push(...buildSignalRows(params.hcs28));
+  lines.push('');
+  lines.push('### Links');
+  lines.push('');
+  const linkLines = [];
   if (params.statusUrl) {
-    lines.push(`- Status page: ${params.statusUrl}`);
+    linkLines.push(`- Status page: ${formatLink('Open on HOL', params.statusUrl)}`);
   }
   if (params.purchaseUrl) {
-    lines.push(`- Purchase credits: ${params.purchaseUrl}`);
+    linkLines.push(`- Purchase credits: ${formatLink('Top up credits', params.purchaseUrl)}`);
   }
   if (params.publishUrl) {
-    lines.push(`- Publish guide: ${params.publishUrl}`);
+    linkLines.push(`- Publish guide: ${formatLink('Review publish flow', params.publishUrl)}`);
   }
   if (params.verificationUrl) {
-    lines.push(`- Verification flow: ${params.verificationUrl}`);
+    linkLines.push(
+      `- Verification flow: ${formatLink('Set up verification', params.verificationUrl)}`,
+    );
   }
-  if (Array.isArray(params.nextActions) && params.nextActions.length > 0) {
+  if (linkLines.length > 0) {
+    lines.push(...linkLines);
+  }
+  if (nextActions.length > 0) {
     lines.push('');
-    lines.push('#### Next step');
+    lines.push('### Recommended next step');
     lines.push('');
-    lines.push(params.nextActions[0]);
+    lines.push(
+      `**Recommended next step:** ${formatLink(nextActions[0].label, nextActions[0].href)}`,
+    );
+    if (nextActions[0].description) {
+      lines.push('');
+      lines.push(nextActions[0].description);
+    }
   }
   return lines.join('\n');
 }
