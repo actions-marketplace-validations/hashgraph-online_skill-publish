@@ -62,6 +62,21 @@ assert.match(
   /status-url:\n\s+description:\s+"Lifecycle status page URL when a preview or publish status page exists"/u,
   'action.yml must expose the status-url output',
 );
+assert.match(
+  actionManifest,
+  /managed-comment-status:\n\s+description:\s+"Managed preview comment update status \(disabled, skipped, created, updated, unchanged, failed\)"/u,
+  'action.yml must expose managed-comment-status output',
+);
+assert.match(
+  actionManifest,
+  /publish-comment-status:\n\s+description:\s+"Publish lifecycle PR comment status \(disabled, skipped, created, updated, unchanged, failed\)"/u,
+  'action.yml must expose publish-comment-status output',
+);
+assert.match(
+  actionManifest,
+  /release-annotation-status:\n\s+description:\s+"Release body lifecycle block status \(disabled, skipped, created, updated, unchanged, failed\)"/u,
+  'action.yml must expose release-annotation-status output',
+);
 assert.equal(
   readme.includes('### GitHub Action (validate-first quickstart)'),
   true,
@@ -76,6 +91,21 @@ assert.equal(
   readme.includes('Publishing immutable releases still consumes HOL Registry Broker credits.'),
   true,
   'README must state that publish remains credit-gated.',
+);
+assert.equal(
+  readme.includes('`managed-comment-status`'),
+  true,
+  'README outputs must document managed-comment-status.',
+);
+assert.equal(
+  readme.includes('`publish-comment-status`'),
+  true,
+  'README outputs must document publish-comment-status.',
+);
+assert.equal(
+  readme.includes('`release-annotation-status`'),
+  true,
+  'README outputs must document release-annotation-status.',
 );
 
 process.stdout.write('readme/action contract test passed\n');
