@@ -1,4 +1,5 @@
 const DEFAULT_MARKER_PREFIX = 'skill-publish-managed';
+const DEFAULT_SUBMIT_URL = 'https://hol.org/registry/skills/submit';
 
 export function buildManagedCommentMarker(groupKey) {
   const normalizedGroupKey = String(groupKey ?? '').trim() || 'default';
@@ -70,7 +71,7 @@ const formatSignalStatus = (params) => {
     return 'Pending';
   }
   if (key === 'verification.domain-proof.score') {
-    return score >= 100 ? 'Verified' : 'Add TXT proof';
+    return score >= 100 ? 'Verified' : 'Link domain on HOL';
   }
   if (key === 'verification.manifest-integrity.score') {
     return score >= 100 ? 'Pinned' : 'Republish package';
@@ -97,6 +98,45 @@ const formatSignalStatus = (params) => {
     return 'Needs cleanup';
   }
   return score >= 100 ? 'Passed' : 'In progress';
+};
+
+const buildImprovementTips = (params) => {
+  const tips = [];
+  const domainProofScore = readScore(params.hcs28, 'verification.domain-proof.score');
+  const repoIntegrityScore = readScore(params.hcs28, 'verification.repo-commit-integrity.score');
+  const manifestIntegrityScore = readScore(params.hcs28, 'verification.manifest-integrity.score');
+  const ciscoScore = readScore(params.hcs28, 'safety.cisco-scan.score');
+  const submitUrl = String(
+    params.verificationUrl || params.purchaseUrl || params.publishUrl || DEFAULT_SUBMIT_URL,
+  ).trim();
+  const publishGuideUrl = String(params.publishUrl || DEFAULT_SUBMIT_URL).trim();
+  const securityUrl = String(
+    params.statusUrl ? `${params.statusUrl}${params.statusUrl.includes('?') ? '&' : '?'}tab=security-breakdown` : '',
+  ).trim();
+
+  if (domainProofScore !== null && domainProofScore < 100) {
+    tips.push(
+      `- Domain proof: open ${formatLink('HOL Skills submit', submitUrl)}, submit or manage this skill there, and link your domain so HOL can verify the TXT record.`,
+    );
+  }
+  if (repoIntegrityScore !== null && repoIntegrityScore < 100) {
+    tips.push(
+      `- Repo + commit integrity: use ${formatLink('the official publish workflow', publishGuideUrl)} so the release is stamped to the exact repo commit that produced it.`,
+    );
+  }
+  if (manifestIntegrityScore !== null && manifestIntegrityScore < 100) {
+    tips.push(
+      `- Manifest integrity: republish from the packaged skill directory so HOL can pin a manifest that matches the shipped files.`,
+    );
+  }
+  if (ciscoScore !== null && ciscoScore < 100) {
+    const securityTarget = securityUrl || params.statusUrl || publishGuideUrl;
+    tips.push(
+      `- Cisco safety scan: review ${formatLink('the security breakdown', securityTarget)} and harden the flagged files before the next publish.`,
+    );
+  }
+
+  return tips;
 };
 
 const buildSignalRows = (hcs28) => {
@@ -195,6 +235,13 @@ export function buildManagedCommentBody(params) {
     lines.push('### Links');
     lines.push('');
     lines.push(...linkLines);
+  }
+  const improvementTips = buildImprovementTips(params);
+  if (improvementTips.length > 0) {
+    lines.push('');
+    lines.push('### How to improve this score');
+    lines.push('');
+    lines.push(...improvementTips);
   }
   if (nextActions.length > 0) {
     lines.push('');

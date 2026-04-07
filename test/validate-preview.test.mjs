@@ -333,7 +333,7 @@ assert.equal(quotePreviewRequests.length, 1);
 assert.equal(quotePreviewRequests[0]?.name, 'valid-skill');
 assert.equal(quotePreviewRequests[0]?.version, '1.0.0');
 
-const managedCommentRun = await runActionMode('valid-skill', 'monitor', {
+const managedCommentRun = await runActionMode('domain-proof-skill', 'monitor', {
   apiBaseUrl: `${oidcServer.baseUrl}/api/v1`,
   previewUpload: 'false',
   githubApiUrl: oidcServer.baseUrl,
@@ -372,12 +372,24 @@ assert.match(
   managedCommentRequests[0]?.body ?? '',
   /\*\*Recommended next step:\*\*/u,
 );
+assert.match(
+  managedCommentRequests[0]?.body ?? '',
+  /### How to improve this score/u,
+);
+assert.match(
+  managedCommentRequests[0]?.body ?? '',
+  /\[HOL Skills submit\]\(https:\/\/hol\.org\/registry\/skills\/submit\)/u,
+);
+assert.match(
+  managedCommentRequests[0]?.body ?? '',
+  /link your domain so HOL can verify the TXT record/u,
+);
 assert.doesNotMatch(
   managedCommentRequests[0]?.body ?? '',
   /### Links/u,
 );
 
-const dedupeRun = await runActionMode('valid-skill', 'validate', {
+const dedupeRun = await runActionMode('domain-proof-skill', 'validate', {
   apiBaseUrl: `${oidcServer.baseUrl}/api/v1`,
   previewUpload: 'false',
   packageInRuntime: true,
