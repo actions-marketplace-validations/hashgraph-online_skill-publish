@@ -596,14 +596,19 @@ const resolveStatusByRepo = async (params) => {
     addCandidate('.');
   }
 
+  const resolvedStatuses = await Promise.all(
+    candidates.map((candidate) =>
+      tryFetchStatusByRepo({
+        apiBaseUrl: params.apiBaseUrl,
+        repoUrl: params.repoUrl,
+        skillDir: candidate,
+        ...(params.ref ? { ref: params.ref } : {}),
+      }),
+    ),
+  );
+
   let preferred = null;
-  for (const candidate of candidates) {
-    const status = await tryFetchStatusByRepo({
-      apiBaseUrl: params.apiBaseUrl,
-      repoUrl: params.repoUrl,
-      skillDir: candidate,
-      ...(params.ref ? { ref: params.ref } : {}),
-    });
+  for (const status of resolvedStatuses) {
     if (!status || typeof status !== 'object' || Array.isArray(status)) {
       continue;
     }

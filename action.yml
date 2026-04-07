@@ -268,6 +268,7 @@ runs:
         INPUT_API_KEY: ${{ inputs.api-key }}
         INPUT_ACCOUNT_ID: ${{ inputs.account-id }}
         INPUT_SKILL_DIR: ${{ inputs.skill-dir }}
+        INPUT_REPO_SKILL_DIR: ${{ inputs.repo-skill-dir }}
         INPUT_NAME: ${{ inputs.name }}
         INPUT_VERSION: ${{ inputs.version }}
         INPUT_ALLOW_NONSTABLE_PRODUCTION_VERSION: ${{ inputs.allow-nonstable-production-version }}
