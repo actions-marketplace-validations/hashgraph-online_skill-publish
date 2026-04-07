@@ -106,9 +106,7 @@ const buildImprovementTips = (params) => {
   const repoIntegrityScore = readScore(params.hcs28, 'verification.repo-commit-integrity.score');
   const manifestIntegrityScore = readScore(params.hcs28, 'verification.manifest-integrity.score');
   const ciscoScore = readScore(params.hcs28, 'safety.cisco-scan.score');
-  const submitUrl = String(
-    params.verificationUrl || params.purchaseUrl || params.publishUrl || DEFAULT_SUBMIT_URL,
-  ).trim();
+  const submitUrl = String(params.submitUrl || params.purchaseUrl || DEFAULT_SUBMIT_URL).trim();
   const publishGuideUrl = String(params.publishUrl || DEFAULT_SUBMIT_URL).trim();
   const securityUrl = String(
     params.statusUrl ? `${params.statusUrl}${params.statusUrl.includes('?') ? '&' : '?'}tab=security-breakdown` : '',
@@ -188,6 +186,7 @@ export function buildManagedCommentBody(params) {
     ? params.nextActions.map(normalizeNextAction).filter(Boolean)
     : [];
   const totalScore = readScore(params.hcs28, 'total');
+  const submitUrl = String(params.submitUrl || params.purchaseUrl || DEFAULT_SUBMIT_URL).trim();
   const lines = [];
   lines.push(params.marker);
   lines.push(`<!-- skill-publish-state:${params.stateSignature} -->`);
@@ -230,6 +229,9 @@ export function buildManagedCommentBody(params) {
     linkLines.push(
       `- Verification flow: ${formatLink('Set up verification', params.verificationUrl)}`,
     );
+  }
+  if (!params.purchaseUrl && submitUrl) {
+    linkLines.push(`- Manage on HOL: ${formatLink('Open submit flow', submitUrl)}`);
   }
   if (linkLines.length > 0) {
     lines.push('### Links');

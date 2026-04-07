@@ -44,7 +44,7 @@ assert.match(body, /\| 74\.5 \| `verified` \| `ready` \|/u);
 assert.match(body, /\| Domain proof \| 0 \| Link domain on HOL \|/u);
 assert.match(body, /\| Cisco safety scan \| 94 \| Strong \|/u);
 assert.match(body, /### How to improve this score/u);
-assert.match(body, /\[HOL Skills submit\]\(https:\/\/hol\.org\/registry\/skills\/verify\)/u);
+assert.match(body, /\[HOL Skills submit\]\(https:\/\/hol\.org\/registry\/skills\/submit\)/u);
 assert.match(body, /link your domain so HOL can verify the TXT record/u);
 assert.match(body, /\*\*Recommended next step:\*\* \[Verify domain proof\]/u);
 assert.match(body, /Purchase credits/u);

@@ -384,9 +384,13 @@ assert.match(
   managedCommentRequests[0]?.body ?? '',
   /link your domain so HOL can verify the TXT record/u,
 );
-assert.doesNotMatch(
+assert.match(
   managedCommentRequests[0]?.body ?? '',
   /### Links/u,
+);
+assert.match(
+  managedCommentRequests[0]?.body ?? '',
+  /Manage on HOL: \[Open submit flow\]\(https:\/\/hol\.org\/registry\/skills\/submit\)/u,
 );
 
 const dedupeRun = await runActionMode('domain-proof-skill', 'validate', {
@@ -426,9 +430,13 @@ assert.match(
   managedCommentUpdates[0]?.body ?? '',
   /## HOL skill scorecard/u,
 );
-assert.doesNotMatch(
+assert.match(
   managedCommentUpdates[0]?.body ?? '',
   /### Links/u,
+);
+assert.match(
+  managedCommentUpdates[0]?.body ?? '',
+  /Manage on HOL: \[Open submit flow\]\(https:\/\/hol\.org\/registry\/skills\/submit\)/u,
 );
 
 const missingSkillMdRun = await runActionMode('missing-skill-md', 'validate');
