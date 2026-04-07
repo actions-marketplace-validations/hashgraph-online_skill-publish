@@ -320,6 +320,31 @@ const readPackageVersion = async () => {
   }
 };
 
+const normalizeMarkerSegment = (value) =>
+  String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, '-')
+    .replace(/^-+|-+$/gu, '');
+
+const buildDefaultManagedCommentGroupKey = (params) => {
+  const repositorySegment = normalizeMarkerSegment(
+    String(params.repository ?? '').replace(/\//gu, '-'),
+  );
+  const skillSegment =
+    normalizeMarkerSegment(params.skillName) ||
+    normalizeMarkerSegment(params.skillDir) ||
+    'skill';
+  const prNumber = Number(params.pullNumber);
+  if (Number.isFinite(prNumber) && prNumber > 0) {
+    return `pr-${prNumber}-${skillSegment}`;
+  }
+  if (repositorySegment) {
+    return `${repositorySegment}-${skillSegment}`;
+  }
+  return skillSegment || 'default';
+};
+
 const setActionOutput = async (name, value) => {
   const outputPath = getEnv('GITHUB_OUTPUT');
   if (!outputPath) {
@@ -829,7 +854,7 @@ const run = async () => {
   const shouldRequestQuotePreview = toBoolean(getEnv('INPUT_QUOTE_PREVIEW'), false);
   const commentMode = String(getEnv('INPUT_COMMENT_MODE', 'state-changes')).trim().toLowerCase();
   const commentOnSuccess = toBoolean(getEnv('INPUT_COMMENT_ON_SUCCESS'), true);
-  const groupKey = String(getEnv('INPUT_GROUP_KEY')).trim() || skillDirInput || 'default';
+  const explicitGroupKey = String(getEnv('INPUT_GROUP_KEY')).trim();
   const githubToken = getEnv('INPUT_GITHUB_TOKEN');
   const mode = String(getEnv('INPUT_MODE', 'publish')).trim().toLowerCase() || 'publish';
   const jsonOutput = toBoolean(getEnv('INPUT_JSON'), false);
@@ -1316,6 +1341,14 @@ const run = async () => {
     const estimatedCreditsRange = formatEstimatedCreditsRange(quotePreview);
     const [owner = '', repo = ''] = repository.split('/', 2);
     const pullNumber = Number(eventPayload?.pull_request?.number ?? 0) || null;
+    const groupKey =
+      explicitGroupKey ||
+      buildDefaultManagedCommentGroupKey({
+        repository,
+        pullNumber,
+        skillName,
+        skillDir: skillDirInput,
+      });
     const stateSignature = buildManagedCommentStateSignature({
       mode,
       trustTier,
