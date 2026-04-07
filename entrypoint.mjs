@@ -455,8 +455,53 @@ const uploadPreviewRecord = async (params) => {
   });
 };
 
+const normalizeSkillDirCandidate = (value) => {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed) {
+    return '';
+  }
+  const normalized = trimmed.replace(/\\/gu, '/').replace(/\/+$/u, '');
+  if (!normalized || normalized === '.') {
+    return '.';
+  }
+  return normalized.replace(/^\.\/+/u, '');
+};
+
+const isStagedPackageDirectory = (value) => {
+  const normalized = normalizeSkillDirCandidate(value);
+  if (!normalized) {
+    return false;
+  }
+  return /(^|\/)publish-package-[^/]+/u.test(normalized);
+};
+
+const parseVerificationSignal = (value) => {
+  if (value && typeof value === 'object' && !Array.isArray(value) && typeof value.ok === 'boolean') {
+    return value.ok;
+  }
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  return null;
+};
+
+const mergeVerificationSignals = (...values) => {
+  let sawFalse = false;
+  for (const value of values) {
+    const parsed = parseVerificationSignal(value);
+    if (parsed === true) {
+      return true;
+    }
+    if (parsed === false) {
+      sawFalse = true;
+    }
+  }
+  return sawFalse ? false : null;
+};
+
 const tryFetchStatusByRepo = async (params) => {
-  if (!params.repoUrl || !params.skillDir) {
+  const skillDir = normalizeSkillDirCandidate(params.skillDir);
+  if (!params.repoUrl || !skillDir || path.isAbsolute(skillDir)) {
     return null;
   }
   try {
@@ -467,13 +512,106 @@ const tryFetchStatusByRepo = async (params) => {
         fetchSkillStatusByRepo({
           baseUrl: params.apiBaseUrl,
           repoUrl: params.repoUrl,
-          skillDir: params.skillDir,
+          skillDir,
           ...(params.ref ? { ref: params.ref } : {}),
         }),
     });
   } catch {
     return null;
   }
+};
+
+const getTrustTierPriority = (value) => {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'verified') {
+    return 4;
+  }
+  if (normalized === 'published') {
+    return 3;
+  }
+  if (normalized === 'validated') {
+    return 2;
+  }
+  if (normalized === 'unclaimed') {
+    return 1;
+  }
+  return 0;
+};
+
+const scoreStatusByRepo = (status) => {
+  if (!status || typeof status !== 'object' || Array.isArray(status)) {
+    return 0;
+  }
+  const trustTierPriority = getTrustTierPriority(status.trustTier);
+  const verificationSignals =
+    status.verificationSignals &&
+    typeof status.verificationSignals === 'object' &&
+    !Array.isArray(status.verificationSignals)
+      ? status.verificationSignals
+      : {};
+  const provenanceSignals =
+    status.provenanceSignals &&
+    typeof status.provenanceSignals === 'object' &&
+    !Array.isArray(status.provenanceSignals)
+      ? status.provenanceSignals
+      : {};
+  const domainProof = mergeVerificationSignals(
+    verificationSignals.domainProof,
+    status.domainProof,
+    status.verifiedDomain,
+  );
+  const manifestIntegrity = mergeVerificationSignals(
+    provenanceSignals.manifestIntegrity,
+    status.checks?.manifestIntegrity,
+  );
+  const repoCommitIntegrity = mergeVerificationSignals(
+    provenanceSignals.repoCommitIntegrity,
+    status.checks?.repoCommitIntegrity,
+  );
+  return (
+    trustTierPriority * 1000 +
+    (domainProof === true ? 200 : 0) +
+    (manifestIntegrity === true ? 40 : 0) +
+    (repoCommitIntegrity === true ? 20 : 0)
+  );
+};
+
+const resolveStatusByRepo = async (params) => {
+  const candidates = [];
+  const addCandidate = (value) => {
+    const normalized = normalizeSkillDirCandidate(value);
+    if (!normalized || candidates.includes(normalized)) {
+      return;
+    }
+    candidates.push(normalized);
+  };
+
+  const repoSkillDir = normalizeSkillDirCandidate(params.repoSkillDir);
+  const shouldUseRepositoryFallbacks = Boolean(repoSkillDir) || isStagedPackageDirectory(params.skillDir);
+
+  addCandidate(params.skillDir);
+  addCandidate(repoSkillDir);
+  if (shouldUseRepositoryFallbacks) {
+    addCandidate(params.skillName);
+    addCandidate('.');
+  }
+
+  let preferred = null;
+  for (const candidate of candidates) {
+    const status = await tryFetchStatusByRepo({
+      apiBaseUrl: params.apiBaseUrl,
+      repoUrl: params.repoUrl,
+      skillDir: candidate,
+      ...(params.ref ? { ref: params.ref } : {}),
+    });
+    if (!status || typeof status !== 'object' || Array.isArray(status)) {
+      continue;
+    }
+    if (!preferred || scoreStatusByRepo(status) > scoreStatusByRepo(preferred)) {
+      preferred = status;
+    }
+  }
+  return preferred;
 };
 
 const tryFetchPublishedSkill = async (params) => {
@@ -992,6 +1130,7 @@ const run = async () => {
   const shouldUploadPreview = toBoolean(getEnv('INPUT_PREVIEW_UPLOAD'), true);
   const shouldSubmitIndexNow = toBoolean(getEnv('INPUT_SUBMIT_INDEXNOW'), false);
   const shouldRequestQuotePreview = toBoolean(getEnv('INPUT_QUOTE_PREVIEW'), false);
+  const repoSkillDirInput = getEnv('INPUT_REPO_SKILL_DIR');
   const commentMode = String(getEnv('INPUT_COMMENT_MODE', 'state-changes')).trim().toLowerCase();
   const commentOnSuccess = toBoolean(getEnv('INPUT_COMMENT_ON_SUCCESS'), true);
   const conversionHintLevel = String(getEnv('INPUT_CONVERSION_HINT_LEVEL', 'soft')).trim().toLowerCase();
@@ -1305,14 +1444,11 @@ const run = async () => {
       ...file,
       sizeBytes: Buffer.byteLength(file.base64, 'base64'),
     }));
-    const publishedSkill =
-      mode === 'monitor'
-        ? await tryFetchPublishedSkill({
-            apiBaseUrl,
-            skillName,
-            skillVersion,
-          })
-        : null;
+    const publishedSkill = await tryFetchPublishedSkill({
+      apiBaseUrl,
+      skillName,
+      skillVersion,
+    });
     const previewReport = buildSkillPreviewReport({
       toolVersion,
       repository,
@@ -1339,15 +1475,14 @@ const run = async () => {
           return null;
         })
       : null;
-    const statusByRepo =
-      mode === 'monitor'
-        ? await tryFetchStatusByRepo({
-            apiBaseUrl,
-            repoUrl,
-            skillDir: skillDirInput,
-            ref: githubRef,
-          })
-        : null;
+    const statusByRepo = await resolveStatusByRepo({
+      apiBaseUrl,
+      repoUrl,
+      skillDir: skillDirInput,
+      repoSkillDir: repoSkillDirInput,
+      skillName,
+      ref: githubRef,
+    });
     const repoCandidates =
       mode === 'monitor'
         ? await tryListRepoCandidates({
@@ -1384,22 +1519,24 @@ const run = async () => {
               ? publishedSkill.verificationSignals
               : {}
           ),
-          publisherBound:
-            publishedSkill?.verificationSignals?.publisherBound ??
-            statusByRepo?.verificationSignals?.publisherBound ??
-            null,
-          repoCommitIntegrity:
-            publishedSkill?.verificationSignals?.repoCommitIntegrity ??
-            statusByRepo?.provenanceSignals?.repoCommitIntegrity ??
-            null,
-          manifestIntegrity:
-            publishedSkill?.verificationSignals?.manifestIntegrity ??
-            statusByRepo?.provenanceSignals?.manifestIntegrity ??
-            null,
-          domainProof:
-            publishedSkill?.verificationSignals?.domainProof ??
-            statusByRepo?.verificationSignals?.domainProof ??
-            null,
+          publisherBound: mergeVerificationSignals(
+            statusByRepo?.verificationSignals?.publisherBound,
+            publishedSkill?.verificationSignals?.publisherBound,
+          ),
+          repoCommitIntegrity: mergeVerificationSignals(
+            statusByRepo?.provenanceSignals?.repoCommitIntegrity,
+            publishedSkill?.verificationSignals?.repoCommitIntegrity,
+          ),
+          manifestIntegrity: mergeVerificationSignals(
+            statusByRepo?.provenanceSignals?.manifestIntegrity,
+            publishedSkill?.verificationSignals?.manifestIntegrity,
+          ),
+          domainProof: mergeVerificationSignals(
+            statusByRepo?.verificationSignals?.domainProof,
+            statusByRepo?.domainProof,
+            statusByRepo?.verifiedDomain,
+            publishedSkill?.verificationSignals?.domainProof,
+          ),
         },
         repo: publishedSkill?.repo ?? repoUrl,
         commit: publishedSkill?.commit ?? commitSha,
