@@ -176,8 +176,6 @@ export function buildManagedCommentBody(params) {
   lines.push('| --- | --- | --- |');
   lines.push(...buildSignalRows(params.hcs28));
   lines.push('');
-  lines.push('### Links');
-  lines.push('');
   const linkLines = [];
   if (params.statusUrl) {
     linkLines.push(`- Status page: ${formatLink('Open on HOL', params.statusUrl)}`);
@@ -194,6 +192,8 @@ export function buildManagedCommentBody(params) {
     );
   }
   if (linkLines.length > 0) {
+    lines.push('### Links');
+    lines.push('');
     lines.push(...linkLines);
   }
   if (nextActions.length > 0) {

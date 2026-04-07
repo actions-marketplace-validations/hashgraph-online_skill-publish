@@ -325,6 +325,10 @@ assert.match(
   managedCommentRequests[0]?.body ?? '',
   /\*\*Recommended next step:\*\*/u,
 );
+assert.doesNotMatch(
+  managedCommentRequests[0]?.body ?? '',
+  /### Links/u,
+);
 
 const missingSkillMdRun = await runActionMode('missing-skill-md', 'validate');
 assert.ok(missingSkillMdRun.error);
