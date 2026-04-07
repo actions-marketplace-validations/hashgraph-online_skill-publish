@@ -11,7 +11,7 @@ import {
   uploadSkillPreviewFromGithubOidc,
 } from './bin/lib/broker-api.mjs';
 import { buildDistributionKit, normalizeApiBaseUrl } from './bin/lib/distribution-kit.mjs';
-import { computeHcs28TrustPreview } from './bin/lib/hcs-28.mjs';
+import { buildHcs28Fallback, computeHcs28TrustPreview } from './bin/lib/hcs-28.mjs';
 import { submitToIndexNow } from './bin/lib/indexnow.mjs';
 import { discoverSkillPackageFiles } from './bin/lib/package-files.mjs';
 import { writeSkillPreviewReport } from './bin/lib/preview-output.mjs';
@@ -1127,6 +1127,10 @@ const run = async () => {
     const eventPayload = await parseEventPayload();
     const generatedAt = new Date().toISOString();
     const toolVersion = await getToolVersion();
+    const previewFiles = files.map((file) => ({
+      ...file,
+      sizeBytes: Buffer.byteLength(file.base64, 'base64'),
+    }));
     const publishedSkill =
       mode === 'monitor'
         ? await tryFetchPublishedSkill({
@@ -1148,10 +1152,7 @@ const run = async () => {
       skillVersion,
       generatedAt,
       eventPayload,
-      files: files.map((file) => ({
-        ...file,
-        sizeBytes: Buffer.byteLength(file.base64, 'base64'),
-      })),
+      files: previewFiles,
       excludedFiles,
       totalBytes,
     });
@@ -1182,10 +1183,11 @@ const run = async () => {
         : repoUrl
           ? [repoUrl]
           : [];
-    const hcs28 = await computeHcs28TrustPreview({
+    const hcs28BaseParams = {
       mode,
       includeExternal: mode === 'monitor',
       computedAt: generatedAt,
+      githubToken: githubToken || getEnv('GITHUB_TOKEN'),
       packageState: {
         skillName,
         skillVersion,
@@ -1230,6 +1232,14 @@ const run = async () => {
         homepage: publishedSkill?.homepage ?? parsedSkillJson?.homepage,
       },
       repoCandidates,
+    };
+    const hcs28 = await computeHcs28TrustPreview(hcs28BaseParams).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      stderr(`HCS-28 scoring failed: ${message}`);
+      return buildHcs28Fallback({
+        ...hcs28BaseParams,
+        errorMessage: message,
+      });
     });
     const previewReportWithHcs28 = buildSkillPreviewReport({
       ...previewReport,
@@ -1245,10 +1255,7 @@ const run = async () => {
       skillVersion,
       generatedAt,
       eventPayload,
-      files: files.map((file) => ({
-        ...file,
-        sizeBytes: Buffer.byteLength(file.base64, 'base64'),
-      })),
+      files: previewFiles,
       excludedFiles,
       totalBytes,
       hcs28,

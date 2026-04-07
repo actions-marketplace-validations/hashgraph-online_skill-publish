@@ -208,29 +208,8 @@ const aggregateWeightedScores = (scores, weights) => {
   return denominator > 0 ? roundScore(numerator / denominator) : 0;
 };
 
-export async function computeHcs28TrustPreview(params) {
+export function buildHcs28Fallback(params) {
   const computedAt = parseString(params.computedAt) || new Date().toISOString();
-  const verificationScores = computeVerificationScores(params);
-  const metadataScores = computeMetadataScores(params.packageState, params.publishedSkill);
-  const scores = {
-    ...verificationScores,
-    ...metadataScores,
-    'upvotes.score': computeUpvotesScore(params.publishedSkill),
-    'safety.cisco-scan.score': computeSafetyScore(params.publishedSkill),
-  };
-  const repositoryHealth = await resolveRepositoryHealthScore({
-    includeExternal: params.includeExternal === true,
-    packageState: params.packageState,
-    publishedSkill: params.publishedSkill,
-    repoCandidates: params.repoCandidates,
-    fetchGitHubRepoHealth: params.fetchGitHubRepoHealth,
-    fetchImplementation: params.fetchImplementation,
-    githubApiBaseUrl: params.githubApiBaseUrl,
-    computedAt,
-  });
-  if (repositoryHealth && Number.isFinite(repositoryHealth.score)) {
-    scores['repository.health.score'] = repositoryHealth.score;
-  }
   return {
     subject: {
       network: parseString(params.publishedSkill?.network) || 'preview',
@@ -252,13 +231,52 @@ export async function computeHcs28TrustPreview(params) {
       compatibilityMode: 'preview-local-integrity-v1',
     },
     trustScores: {
-      ...scores,
-      'verification.score': aggregateWeightedScores(scores, VERIFICATION_WEIGHTS),
-      'metadata.score': aggregateWeightedScores(scores, METADATA_WEIGHTS),
-      total: aggregateWeightedScores(scores, BASELINE_WEIGHTS),
+      total: 0,
     },
     evidence: {
-      repositoryHealth: repositoryHealth?.evidence ?? null,
+      repositoryHealth: null,
+      fallback: true,
+      ...(params.errorMessage ? { error: params.errorMessage } : {}),
     },
   };
+}
+
+export async function computeHcs28TrustPreview(params) {
+  const computedAt = parseString(params.computedAt) || new Date().toISOString();
+  const verificationScores = computeVerificationScores(params);
+  const metadataScores = computeMetadataScores(params.packageState, params.publishedSkill);
+  const scores = {
+    ...verificationScores,
+    ...metadataScores,
+    'upvotes.score': computeUpvotesScore(params.publishedSkill),
+    'safety.cisco-scan.score': computeSafetyScore(params.publishedSkill),
+  };
+  const repositoryHealth = await resolveRepositoryHealthScore({
+    includeExternal: params.includeExternal === true,
+    packageState: params.packageState,
+    publishedSkill: params.publishedSkill,
+    repoCandidates: params.repoCandidates,
+    fetchGitHubRepoHealth: params.fetchGitHubRepoHealth,
+    fetchImplementation: params.fetchImplementation,
+    githubApiBaseUrl: params.githubApiBaseUrl,
+    githubToken: params.githubToken,
+    computedAt,
+  });
+  if (repositoryHealth && Number.isFinite(repositoryHealth.score)) {
+    scores['repository.health.score'] = repositoryHealth.score;
+  }
+  const preview = buildHcs28Fallback({
+    ...params,
+    computedAt,
+  });
+  preview.trustScores = {
+    ...scores,
+    'verification.score': aggregateWeightedScores(scores, VERIFICATION_WEIGHTS),
+    'metadata.score': aggregateWeightedScores(scores, METADATA_WEIGHTS),
+    total: aggregateWeightedScores(scores, BASELINE_WEIGHTS),
+  };
+  preview.evidence = {
+    repositoryHealth: repositoryHealth?.evidence ?? null,
+  };
+  return preview;
 }

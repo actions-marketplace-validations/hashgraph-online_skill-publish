@@ -237,9 +237,11 @@ async function fetchGitHubRepoHealthInternal(params) {
   const githubApiBaseUrl =
     parseString(params.githubApiBaseUrl).replace(/\/+$/u, '') || DEFAULT_GITHUB_API_BASE_URL;
   const fetchImplementation = params.fetchImplementation ?? fetch;
+  const githubToken = parseString(params.githubToken);
   const headers = {
     accept: 'application/vnd.github+json',
     'user-agent': 'hashgraph-online-skill-publish',
+    ...(githubToken ? { authorization: `Bearer ${githubToken}` } : {}),
   };
   const requestRepo = async (repoKey) => {
     const [owner = '', repo = ''] = repoKey.split('/', 2);
@@ -247,7 +249,10 @@ async function fetchGitHubRepoHealthInternal(params) {
       return null;
     }
     const url = `${githubApiBaseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
-    const response = await fetchImplementation(url, { headers });
+    const response = await fetchImplementation(url, {
+      headers,
+      signal: AbortSignal.timeout(10_000),
+    });
     if (!response.ok) {
       return null;
     }
@@ -263,12 +268,19 @@ async function fetchGitHubRepoHealthInternal(params) {
   const normalizedCandidates = candidateRepos.includes(parsedSubject.key)
     ? candidateRepos
     : [parsedSubject.key, ...candidateRepos];
-  const cohortMetrics = [];
-  for (const repoKey of normalizedCandidates.slice(0, 25)) {
-    const metrics = repoKey === parsedSubject.key ? subjectMetrics : await requestRepo(repoKey);
-    if (metrics) {
-      cohortMetrics.push(metrics);
-    }
+  const cohortMetrics = (
+    await Promise.all(
+      normalizedCandidates.slice(0, 25).map(async (repoKey) => {
+        try {
+          return repoKey === parsedSubject.key ? subjectMetrics : await requestRepo(repoKey);
+        } catch {
+          return null;
+        }
+      }),
+    )
+  ).filter(Boolean);
+  if (cohortMetrics.length <= 1) {
+    return null;
   }
   return {
     score: computeRepositoryHealthFromMetrics(subjectMetrics, cohortMetrics),
@@ -311,6 +323,7 @@ export async function resolveRepositoryHealthScore(params) {
     repoCandidates: params.repoCandidates,
     fetchImplementation: params.fetchImplementation,
     githubApiBaseUrl: params.githubApiBaseUrl,
+    githubToken: params.githubToken,
     computedAt: params.computedAt,
   });
 }
