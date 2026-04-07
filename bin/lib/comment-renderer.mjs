@@ -1,8 +1,7 @@
 import { buildMetadataComment } from './comment-metadata.mjs';
+import { normalizeText } from './text-utils.mjs';
 
 const DEFAULT_SUBMIT_URL = 'https://hol.org/registry/skills/submit';
-
-const normalizeText = (value) => String(value ?? '').trim();
 
 const normalizeNumber = (value) =>
   typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -530,4 +529,3 @@ export function renderReleaseBlock(params) {
   lines.push('This block is managed by skill-publish and is updated in place on reruns.');
   return lines.join('\n');
 }
-

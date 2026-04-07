@@ -6,10 +6,9 @@ import {
   extractLegacyStateSignature,
 } from './comment-metadata.mjs';
 import { renderPreviewComment } from './comment-renderer.mjs';
+import { normalizeText } from './text-utils.mjs';
 
 const DEFAULT_HINT_LEVEL = 'soft';
-
-const normalizeText = (value) => String(value ?? '').trim();
 
 const normalizeArray = (value) =>
   Array.isArray(value)
@@ -161,4 +160,3 @@ export function buildManagedCommentBody(params) {
 export function extractManagedCommentMetadata(body) {
   return decodeCommentMetadata(body);
 }
-

@@ -52,6 +52,7 @@ import {
   upsertIssueComment,
   upsertReleaseBodyBlock,
 } from './bin/lib/github-annotations.mjs';
+import { normalizeText } from './bin/lib/text-utils.mjs';
 
 const stdout = (message) => process.stdout.write(`${message}\n`);
 const stderr = (message) => process.stderr.write(`${message}\n`);
@@ -120,8 +121,6 @@ const parseNumber = (value, fallback) => {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
-
-const normalizeText = (value) => String(value ?? '').trim();
 
 const getToolVersion = async () => {
   if (cachedToolVersion) {

@@ -1,4 +1,6 @@
-const normalizeText = (value) => String(value ?? '').trim();
+import { normalizeText } from './text-utils.mjs';
+
+const USER_AGENT = 'hashgraph-online-skill-publish';
 
 const normalizeBody = (body) =>
   String(body ?? '')
@@ -60,7 +62,7 @@ export const createGitHubApiRequest = (baseUrl) => async (params) => {
       'content-type': 'application/json',
       accept: accept ?? 'application/vnd.github+json',
       'x-github-api-version': '2022-11-28',
-      'user-agent': 'hashgraph-online-skill-publish',
+      'user-agent': USER_AGENT,
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
@@ -222,4 +224,3 @@ export const resolveAssociatedPullRequest = async (params) => {
     source: 'commit',
   };
 };
-

@@ -1,10 +1,10 @@
+import { normalizeText } from './text-utils.mjs';
+
 const PREVIEW_MARKER_PREFIX = 'skill-publish-managed';
 const PUBLISH_MARKER_PREFIX = 'skill-publish-publish';
 const RELEASE_MARKER_PREFIX = 'skill-publish-release';
 const METADATA_PREFIX = 'skill-publish-meta';
 const METADATA_SCHEMA_VERSION = '1';
-
-const normalizeText = (value) => String(value ?? '').trim();
 
 const normalizeArray = (value) =>
   Array.isArray(value)
@@ -110,4 +110,3 @@ export function buildMetadataComment(encodedMetadata) {
   const value = normalizeText(encodedMetadata);
   return value ? `<!-- ${METADATA_PREFIX}:${value} -->` : '';
 }
-
