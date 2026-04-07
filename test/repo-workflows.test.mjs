@@ -270,7 +270,7 @@ try {
   );
   assert.equal(
     validateWorkflow.includes(
-      'hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d',
+      'hashgraph-online/skill-publish@9742f4cab7ca48683d39dcd16f92ec7dfe565df7',
     ),
     true,
     'Validate workflow must pin the skill-publish action to an immutable commit SHA.',
@@ -338,7 +338,7 @@ try {
   );
   assert.equal(
     scaffoldedValidateWorkflow.includes(
-      'hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d',
+      'hashgraph-online/skill-publish@9742f4cab7ca48683d39dcd16f92ec7dfe565df7',
     ),
     true,
     'Scaffolded validate workflow must pin skill-publish to an immutable commit SHA.',
@@ -376,7 +376,7 @@ try {
   );
   assert.equal(
     publishMonorepoWorkflow.includes(
-      'hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d',
+      'hashgraph-online/skill-publish@9742f4cab7ca48683d39dcd16f92ec7dfe565df7',
     ),
     true,
     'Monorepo example must pin the skill-publish action to an immutable commit SHA.',

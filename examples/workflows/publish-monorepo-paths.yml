@@ -54,7 +54,7 @@ jobs:
           RESOLVED_VERSION="$(node -p "require('./skills/my-skill/skill.json').version")"
           echo "version=${RESOLVED_VERSION}" >> "$GITHUB_OUTPUT"
       - name: Publish skill package
-        uses: hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d
+        uses: hashgraph-online/skill-publish@9742f4cab7ca48683d39dcd16f92ec7dfe565df7
         with:
           mode: publish
           api-key: ${{ secrets.RB_API_KEY }}
