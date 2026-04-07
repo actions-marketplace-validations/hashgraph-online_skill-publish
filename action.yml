@@ -82,6 +82,12 @@ outputs:
   preview-json:
     description: "Validate or monitor preview artifact JSON payload"
     value: ${{ steps.publish.outputs.preview-json }}
+  hcs28-json:
+    description: "HCS-28 baseline trust payload generated during validate or monitor"
+    value: ${{ steps.publish.outputs.hcs28-json }}
+  hcs28-score-total:
+    description: "HCS-28 total score generated during validate or monitor"
+    value: ${{ steps.publish.outputs.hcs28-score-total }}
   preview-json-path:
     description: "Path to the local preview artifact JSON file written during validate or monitor"
     value: ${{ steps.publish.outputs.preview-json-path }}
