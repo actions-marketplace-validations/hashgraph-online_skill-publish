@@ -223,6 +223,11 @@ try {
     true,
     'Markdown-only skill repos must still generate a validate workflow that stages the package.',
   );
+  assert.equal(
+    markdownOnlyValidateWorkflow.includes('repo-skill-dir:'),
+    true,
+    'Markdown-only skill repos must pass canonical repo-skill-dir for status lookups.',
+  );
 
   const validateWorkflow = await readFile(
     path.join(existingRepoDir, '.github', 'workflows', 'validate-skill.yml'),
@@ -267,6 +272,11 @@ try {
     validateWorkflow.includes('comment-mode: "state-changes"'),
     true,
     'Validate workflow must publish scorecard comments in low-noise state-change mode.',
+  );
+  assert.equal(
+    validateWorkflow.includes('repo-skill-dir:'),
+    true,
+    'Validate workflow must pass canonical repo-skill-dir when staging package folders.',
   );
   assert.equal(
     validateWorkflow.includes(
@@ -323,6 +333,11 @@ try {
     scaffoldedValidateWorkflow.includes('comment-mode: "state-changes"'),
     true,
     'Scaffolded validate workflow must enable low-noise scorecard comment updates.',
+  );
+  assert.equal(
+    scaffoldedValidateWorkflow.includes('repo-skill-dir:'),
+    true,
+    'Scaffolded validate workflow must pass canonical repo-skill-dir when staging package folders.',
   );
   assert.equal(
     scaffoldedValidateWorkflow.includes('Prepare skill package'),

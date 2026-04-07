@@ -352,6 +352,7 @@ ${buildPrepareSkillPackageStep(skillDir)}
         with:
           mode: validate
           skill-dir: \${{ steps.package.outputs.dir }}
+          repo-skill-dir: ${JSON.stringify(skillDir === '' ? '.' : skillDir)}
           annotate: "false"
           preview-upload: "false"
           github-token: \${{ github.token }}

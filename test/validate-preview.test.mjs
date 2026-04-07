@@ -81,6 +81,9 @@ async function runActionMode(fixtureName, mode, options = {}) {
       'utf8',
     );
   }
+  const skillDirInput = options.relativeSkillDir
+    ? path.relative(repoRoot, skillDir) || '.'
+    : skillDir;
 
   try {
     const result = await execFileAsync('node', ['entrypoint.mjs'], {
@@ -89,7 +92,7 @@ async function runActionMode(fixtureName, mode, options = {}) {
         ...process.env,
         INPUT_MODE: mode,
         INPUT_API_BASE_URL: options.apiBaseUrl ?? 'https://hol.org/registry/api/v1',
-        INPUT_SKILL_DIR: skillDir,
+        INPUT_SKILL_DIR: skillDirInput,
         INPUT_ANNOTATE: 'false',
         INPUT_PREVIEW_UPLOAD: options.previewUpload ?? 'true',
         GITHUB_OUTPUT: githubOutputPath,
@@ -159,10 +162,15 @@ assert.equal(githubOutput.get('status-url'), '');
 
 const previewUploadRequests = [];
 const quotePreviewRequests = [];
+const statusByRepoRequests = [];
+const versionLookupRequests = [];
+let domainProofSkillLookupCount = 0;
 const managedCommentRequests = [];
 const managedCommentUpdates = [];
 const storedManagedComments = [];
 const oidcServer = await listenServer(async (request, response) => {
+  const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
+  const requestPath = requestUrl.pathname;
   const body = await new Promise((resolve) => {
     let chunks = '';
     request.setEncoding('utf8');
@@ -172,14 +180,14 @@ const oidcServer = await listenServer(async (request, response) => {
     request.on('end', () => resolve(chunks));
   });
 
-  if (request.url?.startsWith('/oidc')) {
+  if (requestPath.startsWith('/oidc')) {
     assert.equal(request.headers.authorization, 'Bearer broker-test-token');
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify({ value: 'github-oidc-token' }));
     return;
   }
 
-  if (request.url === '/api/v1/skills/preview/github-oidc') {
+  if (requestPath === '/api/v1/skills/preview/github-oidc') {
     previewUploadRequests.push({
       authorization: request.headers.authorization,
       body: body ? JSON.parse(body) : null,
@@ -200,7 +208,7 @@ const oidcServer = await listenServer(async (request, response) => {
     return;
   }
 
-  if (request.url === '/api/v1/skills/quote-preview') {
+  if (requestPath === '/api/v1/skills/quote-preview') {
     quotePreviewRequests.push(body ? JSON.parse(body) : null);
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(
@@ -225,8 +233,152 @@ const oidcServer = await listenServer(async (request, response) => {
     return;
   }
 
+  if (requestPath === '/api/v1/skills') {
+    const name = requestUrl.searchParams.get('name') ?? '';
+    const version = requestUrl.searchParams.get('version') ?? '';
+    versionLookupRequests.push({ name, version });
+    if (name === 'status-override-skill' && version === '1.0.0') {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          items: [
+            {
+              jobId: 'job_status_override_skill',
+              network: 'testnet',
+              name: 'status-override-skill',
+              version: '1.0.0',
+              createdAt: '2026-04-06T12:00:00.000Z',
+              directoryTopicId: '0.0.123',
+              packageTopicId: '0.0.456',
+              skillJsonHrl: 'hcs://1/0.0.456',
+              repo: 'https://github.com/hashgraph-online/valid-skill',
+              verificationSignals: {
+                publisherBound: { ok: true },
+                repoCommitIntegrity: { ok: true },
+                manifestIntegrity: { ok: true },
+                domainProof: { ok: false },
+              },
+            },
+          ],
+          nextCursor: null,
+        }),
+      );
+      return;
+    }
+    if (name === 'domain-proof-skill' && version === '1.0.0') {
+      domainProofSkillLookupCount += 1;
+      const includePublishedSignals = domainProofSkillLookupCount > 1;
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          items: includePublishedSignals
+            ? [
+              {
+                jobId: 'job_domain_proof_skill',
+                network: 'testnet',
+                name: 'domain-proof-skill',
+                version: '1.0.0',
+                createdAt: '2026-04-06T12:00:00.000Z',
+                directoryTopicId: '0.0.123',
+                packageTopicId: '0.0.456',
+                skillJsonHrl: 'hcs://1/0.0.456',
+                repo: 'https://github.com/hashgraph-online/valid-skill',
+                verificationSignals: {
+                  publisherBound: { ok: true },
+                  repoCommitIntegrity: { ok: true },
+                  manifestIntegrity: { ok: true },
+                  domainProof: { ok: true },
+                },
+              },
+            ]
+            : [],
+          nextCursor: null,
+        }),
+      );
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ items: [], nextCursor: null }));
+    return;
+  }
+
+  if (requestPath === '/api/v1/skills/status/by-repo') {
+    const skillDir = requestUrl.searchParams.get('skillDir') ?? '';
+    statusByRepoRequests.push({
+      repo: requestUrl.searchParams.get('repo'),
+      skillDir,
+      ref: requestUrl.searchParams.get('ref'),
+    });
+    if (skillDir.includes('status-override-skill')) {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          name: 'status-override-skill',
+          version: '1.0.0',
+          published: true,
+          verifiedDomain: true,
+          trustTier: 'verified',
+          badgeMetric: 'tier',
+          checks: {
+            repoCommitIntegrity: true,
+            manifestIntegrity: true,
+            domainProof: true,
+          },
+          nextSteps: [],
+          verificationSignals: {
+            domainProof: true,
+            publisherBound: true,
+            verifiedDomain: true,
+            previewValidated: true,
+          },
+          provenanceSignals: {
+            repoCommitIntegrity: true,
+            manifestIntegrity: true,
+            canonicalRelease: true,
+            previewAvailable: true,
+            previewAuthoritative: false,
+          },
+          statusUrl: 'https://hol.org/registry/skills/status-override-skill',
+        }),
+      );
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(
+      JSON.stringify({
+        name: 'domain-proof-skill',
+        version: '1.0.0',
+        published: false,
+        verifiedDomain: false,
+        trustTier: 'validated',
+        badgeMetric: 'status',
+        checks: {
+          repoCommitIntegrity: true,
+          manifestIntegrity: true,
+          domainProof: false,
+        },
+        nextSteps: [],
+        verificationSignals: {
+          domainProof: false,
+          publisherBound: true,
+          verifiedDomain: false,
+          previewValidated: true,
+        },
+        provenanceSignals: {
+          repoCommitIntegrity: true,
+          manifestIntegrity: true,
+          canonicalRelease: false,
+          previewAvailable: true,
+          previewAuthoritative: false,
+        },
+        statusUrl: null,
+      }),
+    );
+    return;
+  }
+
   if (
-    request.url?.startsWith(
+    requestPath.startsWith(
       '/repos/hashgraph-online/valid-skill/issues/5/comments',
     )
   ) {
@@ -260,7 +412,7 @@ const oidcServer = await listenServer(async (request, response) => {
     }
   }
 
-  if (request.url === '/repos/hashgraph-online/valid-skill/issues/comments/501') {
+  if (requestPath === '/repos/hashgraph-online/valid-skill/issues/comments/501') {
     if (request.method === 'PATCH') {
       const payload = body ? JSON.parse(body) : null;
       managedCommentUpdates.push(payload);
@@ -341,6 +493,7 @@ assert.equal(quotePreviewRequests[0]?.version, '1.0.0');
 const managedCommentRun = await runActionMode('domain-proof-skill', 'monitor', {
   apiBaseUrl: `${oidcServer.baseUrl}/api/v1`,
   previewUpload: 'false',
+  relativeSkillDir: true,
   githubApiUrl: oidcServer.baseUrl,
   eventPayload: {
     pull_request: {
@@ -401,6 +554,7 @@ const dedupeRun = await runActionMode('domain-proof-skill', 'validate', {
   apiBaseUrl: `${oidcServer.baseUrl}/api/v1`,
   previewUpload: 'false',
   packageInRuntime: true,
+  relativeSkillDir: true,
   githubApiUrl: oidcServer.baseUrl,
   eventPayload: {
     pull_request: {
@@ -437,9 +591,51 @@ assert.match(
   managedCommentUpdates[0]?.body ?? '',
   /## HOL skill-publish · ✅ Publish-ready/u,
 );
+assert.match(
+  managedCommentUpdates[0]?.body ?? '',
+  /\| Domain proof \| 100(?:\.0)? \| Verified \|/u,
+);
 assert.equal(
-  (managedCommentUpdates[0]?.body ?? '').includes('### Links'),
+  (managedCommentUpdates[0]?.body ?? '').includes('link your domain so HOL can verify the TXT record'),
   false,
+);
+const dedupeHcs28 = JSON.parse(dedupeOutput.get('hcs28-json'));
+assert.equal(
+  dedupeHcs28?.trustScores?.['verification.domain-proof.score'],
+  100,
+);
+assert.ok(
+  statusByRepoRequests.some((entry) =>
+    (entry?.skillDir ?? '').includes('publish-package-domain-proof-skill'),
+  ),
+);
+assert.ok(
+  versionLookupRequests.some((entry) =>
+    entry?.name === 'domain-proof-skill' && entry?.version === '1.0.0',
+  ),
+);
+
+const statusOverrideRun = await runActionMode('domain-proof-skill', 'validate', {
+  apiBaseUrl: `${oidcServer.baseUrl}/api/v1`,
+  previewUpload: 'false',
+  packageInRuntime: true,
+  relativeSkillDir: true,
+  extraEnv: {
+    INPUT_NAME: 'status-override-skill',
+  },
+});
+assert.equal(
+  statusOverrideRun.error,
+  undefined,
+  statusOverrideRun.error?.stderr ?? statusOverrideRun.error?.message,
+);
+const statusOverrideOutput = parseGithubOutput(
+  await readFile(statusOverrideRun.githubOutputPath, 'utf8'),
+);
+const statusOverrideHcs28 = JSON.parse(statusOverrideOutput.get('hcs28-json'));
+assert.equal(
+  statusOverrideHcs28?.trustScores?.['verification.domain-proof.score'],
+  100,
 );
 
 const missingSkillMdRun = await runActionMode('missing-skill-md', 'validate');
@@ -478,6 +674,7 @@ await rm(monitorRun.runtimeRoot, { recursive: true, force: true });
 await rm(quotePreviewRun.runtimeRoot, { recursive: true, force: true });
 await rm(managedCommentRun.runtimeRoot, { recursive: true, force: true });
 await rm(dedupeRun.runtimeRoot, { recursive: true, force: true });
+await rm(statusOverrideRun.runtimeRoot, { recursive: true, force: true });
 if (missingSkillMdRun.runtimeRoot) {
   await rm(missingSkillMdRun.runtimeRoot, { recursive: true, force: true });
 }

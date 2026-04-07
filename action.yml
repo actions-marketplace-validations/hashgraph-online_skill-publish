@@ -22,6 +22,9 @@ inputs:
   skill-dir:
     description: "Path to the skill package folder containing SKILL.md and skill.json"
     required: true
+  repo-skill-dir:
+    description: "Optional canonical skill directory in the repository used for status and trust lookups"
+    required: false
   name:
     description: "Optional name override for skill.json"
     required: false
@@ -265,6 +268,7 @@ runs:
         INPUT_API_KEY: ${{ inputs.api-key }}
         INPUT_ACCOUNT_ID: ${{ inputs.account-id }}
         INPUT_SKILL_DIR: ${{ inputs.skill-dir }}
+        INPUT_REPO_SKILL_DIR: ${{ inputs.repo-skill-dir }}
         INPUT_NAME: ${{ inputs.name }}
         INPUT_VERSION: ${{ inputs.version }}
         INPUT_ALLOW_NONSTABLE_PRODUCTION_VERSION: ${{ inputs.allow-nonstable-production-version }}
