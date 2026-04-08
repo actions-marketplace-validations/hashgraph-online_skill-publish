@@ -39,6 +39,16 @@ assert.match(
 );
 assert.match(
   actionManifest,
+  /publish-auth:\n\s+description:\s+"Publish auth mode for quote and publish: api-key or github-oidc"/u,
+  'action.yml must expose publish-auth for trusted publishing flows',
+);
+assert.match(
+  actionManifest,
+  /repo-skill-dir:\n\s+description:\s+"Original skill directory relative to repo root \(used for status lookups when skill-dir is staged\)"/u,
+  'action.yml must expose repo-skill-dir for staged package status lookups',
+);
+assert.match(
+  actionManifest,
   /- name: Enable pnpm\n\s+shell: bash\n\s+working-directory: \$\{\{ github\.action_path \}\}\n\s+run: corepack enable pnpm/u,
   'action.yml must enable pnpm inside github.action_path before running the entrypoint',
 );
@@ -47,10 +57,10 @@ assert.match(
   /- name: Install action dependencies\n\s+shell: bash\n\s+working-directory: \$\{\{ github\.action_path \}\}\n\s+run: pnpm install --frozen-lockfile --prod --ignore-scripts/u,
   'action.yml must install production dependencies inside github.action_path',
 );
-assert.equal(
-  actionManifest.match(/INPUT_PREVIEW_UPLOAD:/gu)?.length ?? 0,
-  1,
-  'action.yml must only declare INPUT_PREVIEW_UPLOAD once',
+assert.match(
+  actionManifest,
+  /preview-upload:\n\s+description:\s+"When true, validate or monitor may upload preview state through GitHub OIDC only from trusted non-PR workflows"/u,
+  'action.yml must expose preview-upload as an advanced trusted-workflow input',
 );
 assert.match(
   actionManifest,
@@ -91,6 +101,26 @@ assert.equal(
   readme.includes('Publishing immutable releases still consumes HOL Registry Broker credits.'),
   true,
   'README must state that publish remains credit-gated.',
+);
+assert.equal(
+  readme.includes('Advanced: trusted preview uploads with GitHub OIDC'),
+  true,
+  'README must document trusted preview uploads as an advanced opt-in path.',
+);
+assert.equal(
+  readme.includes('Never enable `id-token: write` on `pull_request` or `pull_request_target` just to validate a skill package.'),
+  true,
+  'README must explicitly warn against enabling OIDC on PR validation workflows.',
+);
+assert.equal(
+  readme.includes('POST /api/v1/publish/github-oidc/exchange'),
+  true,
+  'README must document the trusted publish exchange contract when broker support is available.',
+);
+assert.equal(
+  readme.includes('| `repo-skill-dir` | No | - | Original path to the skill directory inside the repository.'),
+  true,
+  'README must document repo-skill-dir for staged package workflows.',
 );
 assert.equal(
   readme.includes('`managed-comment-status`'),

@@ -263,6 +263,7 @@ ${buildVersionResolutionStep('release', skillDir)}
           mode: publish
           api-key: \${{ secrets.RB_API_KEY }}
           skill-dir: \${{ steps.package.outputs.dir }}
+          repo-skill-dir: ${skillDir}
           version: \${{ steps.version.outputs.version }}
           annotate: "${annotate ? 'true' : 'false'}"
           submit-indexnow: "true"
@@ -314,6 +315,7 @@ ${buildVersionResolutionStep('manual', skillDir)}
           api-base-url: \${{ steps.target.outputs.api_base_url }}
           api-key: \${{ secrets.RB_API_KEY }}
           skill-dir: \${{ steps.package.outputs.dir }}
+          repo-skill-dir: ${skillDir}
           version: \${{ steps.version.outputs.version }}
           annotate: "${annotate ? 'true' : 'false'}"
           submit-indexnow: "true"
@@ -352,9 +354,8 @@ ${buildPrepareSkillPackageStep(skillDir)}
         with:
           mode: validate
           skill-dir: \${{ steps.package.outputs.dir }}
-          repo-skill-dir: ${JSON.stringify(skillDir === '' ? '.' : skillDir)}
+          repo-skill-dir: ${skillDir}
           annotate: "false"
-          preview-upload: "false"
           github-token: \${{ github.token }}
           comment-mode: "state-changes"
           comment-on-success: "true"

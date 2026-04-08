@@ -27,7 +27,7 @@ Choose the path that matches how you work:
 
 ### GitHub Action (validate-first quickstart)
 
-Start with a validate-only pull request workflow. This does not require `RB_API_KEY`, does not request `id-token: write`, and keeps the first rollout fork-safe by disabling preview upload until maintainers explicitly opt in.
+Start with a validate-only pull request workflow. This does not require `RB_API_KEY`, does not request `id-token: write`, and keeps validation fully local.
 
 ```yaml
 name: Validate Skill
@@ -54,10 +54,7 @@ jobs:
           mode: validate
           skill-dir: skills/my-skill
           annotate: "false"
-          preview-upload: "false"
 ```
-
-If you want preview uploads later, enable them only in a trusted repo-owned workflow such as `workflow_dispatch` or a protected-branch `push`, then add `id-token: write` and `preview-upload: "true"` there.
 
 ### GitHub Action (release publishing)
 
@@ -86,6 +83,61 @@ jobs:
           skill-dir: skills/my-skill
           annotate: "true"
           github-token: ${{ github.token }}
+```
+
+If your HOL Registry Broker deployment supports `POST /api/v1/publish/github-oidc/exchange`, you can opt into trusted publishing instead of storing a long-lived API key:
+
+```yaml
+name: Publish Skill (Trusted)
+on:
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Publish skill package with GitHub OIDC
+        uses: hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d
+        with:
+          mode: publish
+          publish-auth: github-oidc
+          skill-dir: skills/my-skill
+          annotate: "true"
+          github-token: ${{ github.token }}
+```
+
+### Advanced: trusted preview uploads with GitHub OIDC
+
+If you want HOL-hosted preview status during `validate` or `monitor`, enable it only from repo-owned workflows such as `workflow_dispatch`, `push`, `release`, or `schedule`. Keep it off for PR validation.
+
+Never enable `id-token: write` on `pull_request` or `pull_request_target` just to validate a skill package.
+
+```yaml
+name: Validate Skill Preview Upload
+on:
+  workflow_dispatch:
+
+jobs:
+  validate-preview:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Validate and upload preview state
+        uses: hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d
+        with:
+          mode: validate
+          skill-dir: skills/my-skill
+          preview-upload: "true"
+          annotate: "false"
 ```
 
 ### CLI (recommended for local setup and first publish)
@@ -410,6 +462,7 @@ This action exists to make that publish step deterministic and automated in CI.
 | --- | --- |
 | `skill-dir` with `SKILL.md` | file discovery, MIME detection, size checks, synthesized metadata when `skill.json` is absent |
 | `RB_API_KEY` secret for `quote` and `publish` only | authenticated broker calls that estimate or write on-chain state |
+| optional `publish-auth: github-oidc` on trusted jobs | short-lived publish credentials when the broker enables the OIDC exchange route |
 | optional overrides (`name`, `version`) | payload shaping and metadata stamping |
 | optional annotation settings | release/PR annotation behavior |
 | workflow trigger | quote/publish/job polling orchestration |
@@ -421,8 +474,9 @@ This action exists to make that publish step deterministic and automated in CI.
 | `mode` | No | `publish` | Execution mode: `validate`, `monitor`, `quote`, or `publish`. |
 | `api-key` | Validate: No, Quote/Publish: Yes | - | Registry Broker API key. Publish still consumes credits and requires funded broker auth. |
 | `skill-dir` | Yes | - | Path containing `SKILL.md`. `skill.json` is optional and will be synthesized when missing. |
-| `repo-skill-dir` | No | - | Canonical repository path for status/domain lookups. Set this when `skill-dir` points to a staged package folder. |
+| `repo-skill-dir` | No | - | Original path to the skill directory inside the repository. Use this when CI stages the package into a temporary folder and you still want stable status lookups. |
 | `api-base-url` | No | `https://hol.org/registry/api/v1` | Broker base URL (`.../registry` or `.../registry/api/v1`). |
+| `publish-auth` | No | `api-key` | Quote/publish auth mode: `api-key` or `github-oidc`. |
 | `account-id` | No | - | Optional Hedera account ID for publish authorization edge cases. |
 | `name` | No | - | Optional skill name override for `skill.json`. |
 | `version` | No | - | Optional version override for `skill.json`. Non-stable overrides are blocked on production by default. |
@@ -431,11 +485,11 @@ This action exists to make that publish step deterministic and automated in CI.
 | `poll-timeout-ms` | No | `720000` | Max time to wait for publish job completion. |
 | `poll-interval-ms` | No | `4000` | Interval between publish job status polls. |
 | `annotate` | No | `true` | Post publish result to release notes or merged PR comments. |
-| `preview-upload` | No | `true` | When `mode=validate` or `mode=monitor`, upload preview state through GitHub OIDC when available. |
 | `submit-indexnow` | No | `false` | Submit canonical HOL skill URLs to IndexNow after publish or skip-existing. |
 | `github-token` | No | - | Token used only when `annotate=true`. |
-| `comment-mode` | No | `state-changes` | Controls low-noise managed preview comment behavior for validate, monitor, and quote runs. |
-| `comment-on-success` | No | `true` | When false, skips managed preview comment updates after successful validate, monitor, or quote runs. |
+| `preview-upload` | No | `false` | Upload preview state through GitHub OIDC only from trusted non-PR validate or monitor workflows. |
+| `comment-mode` | No | `state-changes` | Controls low-noise managed PR comment behavior for monitor runs. |
+| `comment-on-success` | No | `true` | When false, skips managed PR comment updates after successful validate or monitor runs. |
 | `quote-preview` | No | `false` | Requests anonymous publish cost estimates during validate or monitor when available. |
 | `conversion-hint-level` | No | `soft` | Preview comment guidance verbosity: `off`, `soft`, or `detailed`. |
 | `group-key` | No | skill directory | Optional grouping key for multi-skill monitor summaries. |
@@ -533,7 +587,6 @@ An HRL looks like: `hcs://1/0.0.12345`
 1. Discovers and validates package files in `skill-dir`.
 2. Resolves broker limits from `/skills/config`.
 3. Emits `skill-preview.v1` JSON plus lifecycle/share outputs.
-4. Optionally uploads preview state through GitHub OIDC.
 
 `mode=quote`
 1. Discovers and validates package files in `skill-dir`.
@@ -560,8 +613,9 @@ An HRL looks like: `hcs://1/0.0.12345`
 
 ## Trust and Security Defaults
 
-- Validate workflows should grant only `contents: read` by default when comments and preview uploads are disabled.
-- Preview uploads should be opt-in and limited to trusted repo-owned workflows. Do not grant `id-token: write` to fork-triggered `pull_request` jobs just to validate package structure.
+- Validate workflows should grant only the minimum permissions they need for checkout and comment updates.
+- Preview uploads are advanced and opt-in. Restrict them to trusted repo-owned workflows and grant `id-token: write` only on those jobs.
+- Trusted publishing is also advanced and opt-in. Only enable `publish-auth: github-oidc` on trusted repo-owned jobs that already need publish authority.
 - Publish workflows that annotate releases or PRs typically also need `contents: write`, `pull-requests: write`, and `issues: write`.
 - Store `RB_API_KEY` in repository or organization secrets.
 - If you do not need GitHub annotations, set `annotate: "false"` and omit `github-token`.

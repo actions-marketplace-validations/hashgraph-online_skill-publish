@@ -224,9 +224,9 @@ try {
     'Markdown-only skill repos must still generate a validate workflow that stages the package.',
   );
   assert.equal(
-    markdownOnlyValidateWorkflow.includes('repo-skill-dir:'),
+    markdownOnlyValidateWorkflow.includes('repo-skill-dir: skills/docs-skill'),
     true,
-    'Markdown-only skill repos must pass canonical repo-skill-dir for status lookups.',
+    'Markdown-only skill repos must preserve the original repo skill path for status lookups.',
   );
 
   const validateWorkflow = await readFile(
@@ -259,9 +259,9 @@ try {
     'Validate workflow must stage a canonical package before validation.',
   );
   assert.equal(
-    validateWorkflow.includes('preview-upload: "false"'),
+    validateWorkflow.includes('repo-skill-dir: skills/weather-skill'),
     true,
-    'Validate workflow must disable preview upload by default.',
+    'Validate workflow must preserve the original repo skill path for staged package status lookups.',
   );
   assert.equal(
     validateWorkflow.includes('github-token: ${{ github.token }}'),
@@ -320,11 +320,6 @@ try {
     'Scaffolded validate workflow must stay fork-safe by default.',
   );
   assert.equal(
-    scaffoldedValidateWorkflow.includes('preview-upload: "false"'),
-    true,
-    'Scaffolded validate workflow must disable preview upload by default.',
-  );
-  assert.equal(
     scaffoldedValidateWorkflow.includes('github-token: ${{ github.token }}'),
     true,
     'Scaffolded validate workflow must pass the GitHub token through for managed PR comments.',
@@ -345,6 +340,11 @@ try {
     'Scaffolded validate workflow must stage a canonical package before validation.',
   );
   assert.equal(
+    scaffoldedValidateWorkflow.includes('repo-skill-dir: skills/catalog-skill'),
+    true,
+    'Scaffolded validate workflow must preserve the original repo skill path for staged package status lookups.',
+  );
+  assert.equal(
     scaffoldedValidateWorkflow.includes(
       'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683',
     ),
@@ -362,13 +362,6 @@ try {
     scaffoldedReadme.includes('Open a pull request to run fork-safe validate-only CI first.'),
     true,
     'Scaffolded repo README must direct maintainers through validate-first setup.',
-  );
-  assert.equal(
-    scaffoldedReadme.includes(
-      'Keep preview upload disabled until maintainers explicitly opt in to a trusted repo-owned workflow.',
-    ),
-    true,
-    'Scaffolded repo README must keep preview uploads opt-in instead of enabling OIDC by default.',
   );
   assert.equal(
     scaffoldedReadme.includes('Add `RB_API_KEY` only when you are ready to quote and publish immutable releases.'),
