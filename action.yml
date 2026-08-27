@@ -9,15 +9,26 @@ inputs:
     description: "Registry Broker base URL (either .../registry or .../registry/api/v1)"
     required: false
     default: "https://hol.org/registry/api/v1"
+  mode:
+    description: "Execution mode: validate, monitor, quote, or publish"
+    required: false
+    default: "publish"
   api-key:
-    description: "Registry Broker API key"
-    required: true
+    description: "Registry Broker API key (required for quote and publish, optional for validate)"
+    required: false
+  publish-auth:
+    description: "Publish auth mode for quote and publish: api-key or github-oidc"
+    required: false
+    default: "api-key"
   account-id:
     description: "Optional Hedera account ID used for publish authorization"
     required: false
   skill-dir:
     description: "Path to the skill package folder containing SKILL.md and skill.json"
     required: true
+  repo-skill-dir:
+    description: "Original skill directory relative to repo root (used for status lookups when skill-dir is staged)"
+    required: false
   name:
     description: "Optional name override for skill.json"
     required: false
@@ -51,7 +62,84 @@ inputs:
   github-token:
     description: "GitHub token used for release or PR annotations"
     required: false
+  preview-upload:
+    description: "When true, validate or monitor may upload preview state through GitHub OIDC only from trusted non-PR workflows"
+    required: false
+    default: "false"
+  comment-mode:
+    description: "Managed preview comment behavior: off, failures-only, state-changes, or always"
+    required: false
+    default: "state-changes"
+  comment-on-success:
+    description: "When true, allows managed comments on successful state changes"
+    required: false
+    default: "true"
+  quote-preview:
+    description: "When true, requests an estimated publish cost preview when the skill is publish-ready"
+    required: false
+    default: "false"
+  conversion-hint-level:
+    description: "Conversion hint verbosity: off, soft, or detailed"
+    required: false
+    default: "soft"
+  group-key:
+    description: "Optional grouping key for multi-skill monitor summaries"
+    required: false
 outputs:
+  preview-json:
+    description: "Validate or monitor preview artifact JSON payload"
+    value: ${{ steps.publish.outputs.preview-json }}
+  hcs28-json:
+    description: "HCS-28 baseline trust payload generated during validate or monitor"
+    value: ${{ steps.publish.outputs.hcs28-json }}
+  hcs28-score-total:
+    description: "HCS-28 total score generated during validate or monitor"
+    value: ${{ steps.publish.outputs.hcs28-score-total }}
+  preview-json-path:
+    description: "Path to the local preview artifact JSON file written during validate or monitor"
+    value: ${{ steps.publish.outputs.preview-json-path }}
+  status-url:
+    description: "Lifecycle status page URL when a preview or publish status page exists"
+    value: ${{ steps.publish.outputs.status-url }}
+  trust-tier:
+    description: "Lifecycle trust tier for the current skill state"
+    value: ${{ steps.publish.outputs.trust-tier }}
+  publish-readiness:
+    description: "Publish readiness summary for validate or monitor runs"
+    value: ${{ steps.publish.outputs.publish-readiness }}
+  missing-requirements:
+    description: "JSON array describing missing publish or trust requirements"
+    value: ${{ steps.publish.outputs.missing-requirements }}
+  estimated-credits-range:
+    description: "Estimated publish credit range when quote preview is available"
+    value: ${{ steps.publish.outputs.estimated-credits-range }}
+  managed-comment-url:
+    description: "Managed GitHub comment URL when the action updates a PR or issue comment"
+    value: ${{ steps.publish.outputs.managed-comment-url }}
+  managed-comment-status:
+    description: "Managed preview comment update status (disabled, skipped, created, updated, unchanged, failed)"
+    value: ${{ steps.publish.outputs.managed-comment-status }}
+  managed-comment-reason:
+    description: "Managed preview comment status detail or skip reason"
+    value: ${{ steps.publish.outputs.managed-comment-reason }}
+  publish-comment-url:
+    description: "Publish lifecycle PR comment URL when publish annotations are enabled"
+    value: ${{ steps.publish.outputs.publish-comment-url }}
+  publish-comment-status:
+    description: "Publish lifecycle PR comment status (disabled, skipped, created, updated, unchanged, failed)"
+    value: ${{ steps.publish.outputs.publish-comment-status }}
+  release-annotation-status:
+    description: "Release body lifecycle block status (disabled, skipped, created, updated, unchanged, failed)"
+    value: ${{ steps.publish.outputs.release-annotation-status }}
+  purchase-url:
+    description: "Deep link to purchase or top up credits for publish"
+    value: ${{ steps.publish.outputs.purchase-url }}
+  publish-url:
+    description: "Deep link to publish or setup a publish flow"
+    value: ${{ steps.publish.outputs.publish-url }}
+  verification-url:
+    description: "Deep link to verification or trust-upgrade guidance"
+    value: ${{ steps.publish.outputs.verification-url }}
   published:
     description: "Whether a publish operation executed (false when skipped because version already exists)"
     value: ${{ steps.publish.outputs.published }}
@@ -167,14 +255,25 @@ runs:
       uses: actions/setup-node@v4
       with:
         node-version: 20
+    - name: Enable pnpm
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: corepack enable pnpm
+    - name: Install action dependencies
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: pnpm install --frozen-lockfile --prod --ignore-scripts
     - name: Publish skill
       id: publish
       shell: bash
       env:
         INPUT_API_BASE_URL: ${{ inputs.api-base-url }}
+        INPUT_MODE: ${{ inputs.mode }}
         INPUT_API_KEY: ${{ inputs.api-key }}
+        INPUT_PUBLISH_AUTH: ${{ inputs.publish-auth }}
         INPUT_ACCOUNT_ID: ${{ inputs.account-id }}
         INPUT_SKILL_DIR: ${{ inputs.skill-dir }}
+        INPUT_REPO_SKILL_DIR: ${{ inputs.repo-skill-dir }}
         INPUT_NAME: ${{ inputs.name }}
         INPUT_VERSION: ${{ inputs.version }}
         INPUT_ALLOW_NONSTABLE_PRODUCTION_VERSION: ${{ inputs.allow-nonstable-production-version }}
@@ -184,4 +283,10 @@ runs:
         INPUT_ANNOTATE: ${{ inputs.annotate }}
         INPUT_SUBMIT_INDEXNOW: ${{ inputs.submit-indexnow }}
         INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_PREVIEW_UPLOAD: ${{ inputs.preview-upload }}
+        INPUT_COMMENT_MODE: ${{ inputs.comment-mode }}
+        INPUT_COMMENT_ON_SUCCESS: ${{ inputs.comment-on-success }}
+        INPUT_QUOTE_PREVIEW: ${{ inputs.quote-preview }}
+        INPUT_CONVERSION_HINT_LEVEL: ${{ inputs.conversion-hint-level }}
+        INPUT_GROUP_KEY: ${{ inputs.group-key }}
       run: node "${{ github.action_path }}/entrypoint.mjs"

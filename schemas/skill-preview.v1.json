@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hol.org/schemas/skill-preview.v1.json",
+  "title": "skill-preview.v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "tool_version",
+    "preview_id",
+    "repo_url",
+    "repo_owner",
+    "repo_name",
+    "default_branch",
+    "commit_sha",
+    "ref",
+    "event_name",
+    "workflow_run_url",
+    "skill_dir",
+    "name",
+    "version",
+    "validation_status",
+    "findings",
+    "package_summary",
+    "suggested_next_steps",
+    "generated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "skill-preview.v1"
+    },
+    "tool_version": {
+      "type": "string"
+    },
+    "preview_id": {
+      "type": "string"
+    },
+    "repo_url": {
+      "type": "string"
+    },
+    "repo_owner": {
+      "type": "string"
+    },
+    "repo_name": {
+      "type": "string"
+    },
+    "default_branch": {
+      "type": "string"
+    },
+    "commit_sha": {
+      "type": "string"
+    },
+    "ref": {
+      "type": "string"
+    },
+    "event_name": {
+      "type": "string"
+    },
+    "workflow_run_url": {
+      "type": "string"
+    },
+    "skill_dir": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "validation_status": {
+      "type": "string",
+      "enum": ["passed"]
+    },
+    "findings": {
+      "type": "array"
+    },
+    "package_summary": {
+      "type": "object"
+    },
+    "hcs_28": {
+      "type": ["object", "null"],
+      "required": ["profile", "execution", "trustScores"],
+      "properties": {
+        "subject": {
+          "type": "object"
+        },
+        "profile": {
+          "type": "object",
+          "required": ["id", "version"],
+          "properties": {
+            "id": {
+              "type": "string",
+              "const": "hcs-28/baseline"
+            },
+            "version": {
+              "type": "string",
+              "const": "0.1"
+            }
+          },
+          "additionalProperties": true
+        },
+        "execution": {
+          "type": "object",
+          "required": ["includeExternal", "computedAt"],
+          "properties": {
+            "includeExternal": {
+              "type": "boolean"
+            },
+            "computedAt": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        },
+        "trustScores": {
+          "type": "object",
+          "required": ["total"],
+          "properties": {
+            "total": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "evidence": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
+    "suggested_next_steps": {
+      "type": "array"
+    },
+    "generated_at": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

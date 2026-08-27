@@ -3,10 +3,6 @@ name: Publish Skill (Manual)
 on:
   workflow_dispatch:
     inputs:
-      skill_dir:
-        type: string
-        required: true
-        default: skills/my-skill
       publish_target:
         type: choice
         required: true
@@ -29,9 +25,11 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
+      pull-requests: write
+      issues: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Resolve broker API URL
         id: target
         shell: bash
@@ -41,12 +39,50 @@ jobs:
           else
             echo "api_base_url=https://hol.org/registry/api/v1" >> "$GITHUB_OUTPUT"
           fi
+      - name: Prepare skill package
+        id: package
+        shell: bash
+        run: |
+          SOURCE_DIR="skills/my-skill"
+          PACKAGE_DIR="publish-package-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "${PACKAGE_DIR}/references" "${PACKAGE_DIR}/schemas"
+          cp "${SOURCE_DIR}/SKILL.md" "${SOURCE_DIR}/skill.json" "${PACKAGE_DIR}/"
+          if [[ -f "${SOURCE_DIR}/apis.json" ]]; then
+            cp "${SOURCE_DIR}/apis.json" "${PACKAGE_DIR}/"
+          fi
+          if [[ -f "${SOURCE_DIR}/llms.txt" ]]; then
+            cp "${SOURCE_DIR}/llms.txt" "${PACKAGE_DIR}/"
+          fi
+          if [[ -d "${SOURCE_DIR}/references" ]]; then
+            shopt -s nullglob
+            reference_files=("${SOURCE_DIR}"/references/*.md)
+            if (( ${#reference_files[@]} > 0 )); then
+              cp "${reference_files[@]}" "${PACKAGE_DIR}/references/"
+            fi
+          fi
+          if [[ -f "${SOURCE_DIR}/schemas/skill.schema.json" ]]; then
+            cp "${SOURCE_DIR}/schemas/skill.schema.json" "${PACKAGE_DIR}/schemas/"
+          fi
+          echo "dir=${PACKAGE_DIR}" >> "$GITHUB_OUTPUT"
+      - name: Resolve publish version
+        id: version_resolve
+        shell: bash
+        run: |
+          VERSION_INPUT="${{ inputs.version }}"
+          if [[ -n "${VERSION_INPUT}" ]]; then
+            RESOLVED_VERSION="${VERSION_INPUT}"
+          else
+            RESOLVED_VERSION="$(node -p "require('./skills/my-skill/skill.json').version")"
+          fi
+          echo "version=${RESOLVED_VERSION}" >> "$GITHUB_OUTPUT"
       - name: Publish skill package
-        uses: hashgraph-online/skill-publish@v1
+        uses: hashgraph-online/skill-publish@9742f4cab7ca48683d39dcd16f92ec7dfe565df7
         with:
+          mode: publish
           api-base-url: ${{ steps.target.outputs.api_base_url }}
           api-key: ${{ secrets.RB_API_KEY }}
-          skill-dir: ${{ inputs.skill_dir }}
-          version: ${{ inputs.version }}
+          skill-dir: ${{ steps.package.outputs.dir }}
+          version: ${{ steps.version_resolve.outputs.version }}
           annotate: ${{ inputs.annotate }}
+          submit-indexnow: "true"
           github-token: ${{ github.token }}

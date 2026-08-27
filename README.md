@@ -1,6 +1,7 @@
 # skill-publish
 
-`skill-publish` is the official CLI and GitHub Action for publishing **trustless, immutable, on-chain** skill releases through the HOL Registry Broker.
+| ![Hashgraph Online Logo](https://hol.org/brand/Logo_Whole_Dark.png) | The official **skill-publish** CLI and GitHub Action for validating, quoting, and publishing trustless, immutable, on-chain skill releases through the HOL Registry Broker.<br><br>Built and maintained by [Hashgraph Online](https://hol.org).<br><br>[npm Package](https://www.npmjs.com/package/skill-publish)<br>[GitHub Marketplace](https://github.com/marketplace/actions/skill-publish)<br>[HOL Registry](https://hol.org/registry)<br>[DeepWiki Wiki](https://deepwiki.com/hashgraph-online/skill-publish) |
+| :--- | :--- |
 
 Instead of sharing mutable URLs or copy/paste blobs, each `name@version` release is recorded on Hedera (HCS) and exposed via `hcs://...` references. That immutability is the value: the published artifact is tamper-evident, reproducible, and audit-friendly.
 
@@ -10,7 +11,7 @@ Immutability gives you:
 - **Reproducible retrieval:** the same canonical references resolve later (not “whatever is at this URL today”).
 - **Audit trail:** topic IDs, job IDs, and optional repo+commit stamping connect releases back to source.
 
-A skill package is `SKILL.md` + `skill.json` (plus optional files). The action validates, quotes, publishes, waits for completion, and emits outputs.
+A skill package starts with `SKILL.md`. `skill.json` is optional metadata; when it is absent, `skill-publish` synthesizes it during validate, quote, and publish flows.
 
 By default, `skill-publish` excludes hidden files and directories, env files, lockfiles, build output, local databases, and key/certificate material from package discovery before quote or publish.
 
@@ -18,14 +19,46 @@ By default, `skill-publish` excludes hidden files and directories, env files, lo
 [![GitHub Marketplace](https://img.shields.io/badge/GitHub_Marketplace-skill--publish-2EA44F?style=for-the-badge&logo=github)](https://github.com/marketplace/actions/skill-publish)
 [![OpenAPI Spec](https://img.shields.io/badge/OpenAPI-3.1.0-6BA539?style=for-the-badge&logo=openapiinitiative&logoColor=white)](https://hol.org/registry/api/v1/openapi.json)
 [![HOL Registry](https://img.shields.io/badge/HOL-Registry-5599FE?style=for-the-badge)](https://hol.org/registry)
+[![DeepWiki](https://img.shields.io/badge/DeepWiki-Wiki-0F172A?style=for-the-badge&logo=bookstack&logoColor=white)](https://deepwiki.com/hashgraph-online/skill-publish)
 
 ## Quick Start
 
 Choose the path that matches how you work:
 
-### GitHub Action (recommended for releases)
+### GitHub Action (validate-first quickstart)
 
-Add the official action to your repo and publish on GitHub releases:
+Start with a validate-only pull request workflow. This does not require `RB_API_KEY`, does not request `id-token: write`, and keeps validation fully local.
+
+```yaml
+name: Validate Skill
+on:
+  pull_request:
+    paths:
+      - skills/my-skill/**
+      - .hol/skill-publish.yml
+      - .github/workflows/validate-skill.yml
+
+jobs:
+  validate:
+    concurrency:
+      group: validate-skill-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Validate skill package
+        uses: hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d
+        with:
+          mode: validate
+          skill-dir: skills/my-skill
+          annotate: "false"
+```
+
+### GitHub Action (release publishing)
+
+Publishing immutable releases still consumes HOL Registry Broker credits. Add `RB_API_KEY` only when you are ready to request an authenticated quote and then publish on-chain:
 
 ```yaml
 name: Publish Skill
@@ -41,22 +74,80 @@ jobs:
       pull-requests: write
       issues: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Publish skill package
-        uses: hashgraph-online/skill-publish@v1
+        uses: hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d
         with:
+          mode: publish
           api-key: ${{ secrets.RB_API_KEY }}
           skill-dir: skills/my-skill
           annotate: "true"
           github-token: ${{ github.token }}
 ```
 
+If your HOL Registry Broker deployment supports `POST /api/v1/publish/github-oidc/exchange`, you can opt into trusted publishing instead of storing a long-lived API key:
+
+```yaml
+name: Publish Skill (Trusted)
+on:
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Publish skill package with GitHub OIDC
+        uses: hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d
+        with:
+          mode: publish
+          publish-auth: github-oidc
+          skill-dir: skills/my-skill
+          annotate: "true"
+          github-token: ${{ github.token }}
+```
+
+### Advanced: trusted preview uploads with GitHub OIDC
+
+If you want HOL-hosted preview status during `validate` or `monitor`, enable it only from repo-owned workflows such as `workflow_dispatch`, `push`, `release`, or `schedule`. Keep it off for PR validation.
+
+Never enable `id-token: write` on `pull_request` or `pull_request_target` just to validate a skill package.
+
+```yaml
+name: Validate Skill Preview Upload
+on:
+  workflow_dispatch:
+
+jobs:
+  validate-preview:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Validate and upload preview state
+        uses: hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d
+        with:
+          mode: validate
+          skill-dir: skills/my-skill
+          preview-upload: "true"
+          annotate: "false"
+```
+
 ### CLI (recommended for local setup and first publish)
 
 ```bash
 npx skill-publish
+npx skill-publish validate ./weather-skill
 npx skill-publish setup --account-id 0.0.12345 --hedera-private-key <key>
 npx skill-publish create ./weather-skill --name weather-skill --preset api
+npx skill-publish quote ./weather-skill
 npx skill-publish publish ./weather-skill
 ```
 
@@ -67,12 +158,13 @@ After publish, use the returned canonical skill page, badge snippet, and resolve
 If you already have a repo and wallet, this is the shortest path to a live page:
 
 ```bash
-npx skill-publish setup --account-id 0.0.12345 --hedera-private-key <key>
+npx skill-publish inspect-repo .
 npx skill-publish setup-action . --skill-dir .
+npx skill-publish setup --account-id 0.0.12345 --hedera-private-key <key>
 git tag v1.0.0 && git push --tags
 ```
 
-That gives you a live Registry page, pinned install URLs, and share-ready badge snippets from the action outputs.
+That gives you validate-only CI first, then a live Registry page, pinned install URLs, and share-ready badge snippets once you have funded credits and publish a release.
 
 ## Jump To
 
@@ -101,13 +193,17 @@ npx skill-publish init ./skills/my-skill
 npx skill-publish doctor ./skills/my-skill
 npx skill-publish doctor ./skills/my-skill --fix --local-only
 npx skill-publish validate ./skills/my-skill
-RB_API_KEY=rbk_xxx npx skill-publish quote ./skills/my-skill
-RB_API_KEY=rbk_xxx npx skill-publish publish ./skills/my-skill
+npx skill-publish monitor ./skills/my-skill --quote-preview
+npx skill-publish quote --skill-dir ./skills/my-skill
+npx skill-publish publish --skill-dir ./skills/my-skill
 ```
 
 Repository automation flows:
 
 ```bash
+# Inspect an existing repo before opening a workflow PR
+npx skill-publish inspect-repo .
+
 # Add a publish workflow to an existing SKILL.md repository
 npx skill-publish setup-action . --skill-dir skills/my-skill
 
@@ -171,13 +267,32 @@ What `setup` does:
 - stores the key in `~/.skill-publish/credentials.json` (unless `--no-save`)
 - optionally purchases credits with `--hbar`
 
+## Repo Qualification Before Outreach
+
+Outreach PRs only work when the target repository already contains a real HOL skill package. Use `inspect-repo` first:
+
+```bash
+npx skill-publish inspect-repo .
+npx skill-publish inspect-repo . --json
+```
+
+What `inspect-repo` checks:
+- valid HOL packages with `SKILL.md` present
+- partial skill-like directories that are missing `SKILL.md`
+- whether `setup-action` can be added safely without guessing a skill directory
+
+`setup-action` now refuses to generate workflows for repos that do not already contain a valid HOL skill package.
+
 After setup, `quote` and `publish` automatically reuse the stored key, so you can run:
 
 ```bash
 npx skill-publish doctor ./skills/my-skill
+npx skill-publish validate ./skills/my-skill
 npx skill-publish quote ./skills/my-skill
 npx skill-publish publish ./skills/my-skill
 ```
+
+`quote` requires broker authentication, and `publish` requires both broker authentication and funded credits because the release is written on-chain.
 
 `publish` remains the default command, so legacy flag-only usage still works:
 
@@ -186,6 +301,12 @@ RB_API_KEY=rbk_xxx npx skill-publish --skill-dir ./skills/my-skill
 ```
 
 Optional overrides:
+
+```bash
+npx skill-publish \
+  --mode validate \
+  --skill-dir ./skills/my-skill
+```
 
 ```bash
 npx skill-publish \
@@ -204,6 +325,20 @@ npx skill-publish publish ./skills/my-skill --dry-run
 # with key => quote-only
 ```
 
+GitHub Action modes:
+
+```yaml
+with:
+  mode: validate # no RB_API_KEY required
+  annotate: "false"
+```
+
+```yaml
+with:
+  mode: publish
+  api-key: ${{ secrets.RB_API_KEY }}
+```
+
 ## First Publish in Under 5 Minutes
 
 Use this path when you want the full CI/CD setup with GitHub releases and annotations.
@@ -211,8 +346,36 @@ Use this path when you want the full CI/CD setup with GitHub releases and annota
 1. Generate an API key: https://hol.org/registry/docs?tab=api-keys
 2. Add credits: https://hol.org/registry/docs?tab=credits
 3. Add `RB_API_KEY` as a GitHub secret.
-4. Commit `SKILL.md` and `skill.json` to your repo.
-5. Add this workflow and publish a release.
+4. Commit `SKILL.md` to your repo. Add `skill.json` only if you want to pin metadata explicitly instead of using synthesized defaults.
+5. Add the validate workflow for pull requests, then add the publish workflow for releases.
+
+Validate on pull requests without secrets:
+
+```yaml
+name: Validate Skill
+
+on:
+  pull_request:
+    paths:
+      - skills/my-skill/**
+      - .github/workflows/validate-skill.yml
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate skill package
+        uses: hashgraph-online/skill-publish@v1
+        with:
+          mode: validate
+          skill-dir: skills/my-skill
+          annotate: "false"
+```
+
+Publish immutable releases:
 
 ```yaml
 name: Publish Skill
@@ -232,6 +395,7 @@ jobs:
       - name: Publish skill package
         uses: hashgraph-online/skill-publish@v1
         with:
+          mode: publish
           api-key: ${{ secrets.RB_API_KEY }}
           skill-dir: skills/my-skill
           annotate: "true"
@@ -296,8 +460,9 @@ This action exists to make that publish step deterministic and automated in CI.
 
 | You provide | Action handles |
 | --- | --- |
-| `skill-dir` with `SKILL.md` and `skill.json` | file discovery, MIME detection, size checks |
-| `RB_API_KEY` secret | authenticated API calls |
+| `skill-dir` with `SKILL.md` | file discovery, MIME detection, size checks, synthesized metadata when `skill.json` is absent |
+| `RB_API_KEY` secret for `quote` and `publish` only | authenticated broker calls that estimate or write on-chain state |
+| optional `publish-auth: github-oidc` on trusted jobs | short-lived publish credentials when the broker enables the OIDC exchange route |
 | optional overrides (`name`, `version`) | payload shaping and metadata stamping |
 | optional annotation settings | release/PR annotation behavior |
 | workflow trigger | quote/publish/job polling orchestration |
@@ -306,9 +471,12 @@ This action exists to make that publish step deterministic and automated in CI.
 
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
-| `api-key` | Yes | - | Registry Broker API key. |
-| `skill-dir` | Yes | - | Path containing `SKILL.md` and `skill.json`. |
+| `mode` | No | `publish` | Execution mode: `validate`, `monitor`, `quote`, or `publish`. |
+| `api-key` | Validate: No, Quote/Publish: Yes | - | Registry Broker API key. Publish still consumes credits and requires funded broker auth. |
+| `skill-dir` | Yes | - | Path containing `SKILL.md`. `skill.json` is optional and will be synthesized when missing. |
+| `repo-skill-dir` | No | - | Original path to the skill directory inside the repository. Use this when CI stages the package into a temporary folder and you still want stable status lookups. |
 | `api-base-url` | No | `https://hol.org/registry/api/v1` | Broker base URL (`.../registry` or `.../registry/api/v1`). |
+| `publish-auth` | No | `api-key` | Quote/publish auth mode: `api-key` or `github-oidc`. |
 | `account-id` | No | - | Optional Hedera account ID for publish authorization edge cases. |
 | `name` | No | - | Optional skill name override for `skill.json`. |
 | `version` | No | - | Optional version override for `skill.json`. Non-stable overrides are blocked on production by default. |
@@ -319,45 +487,69 @@ This action exists to make that publish step deterministic and automated in CI.
 | `annotate` | No | `true` | Post publish result to release notes or merged PR comments. |
 | `submit-indexnow` | No | `false` | Submit canonical HOL skill URLs to IndexNow after publish or skip-existing. |
 | `github-token` | No | - | Token used only when `annotate=true`. |
+| `preview-upload` | No | `false` | Upload preview state through GitHub OIDC only from trusted non-PR validate or monitor workflows. |
+| `comment-mode` | No | `state-changes` | Controls low-noise managed PR comment behavior for monitor runs. |
+| `comment-on-success` | No | `true` | When false, skips managed PR comment updates after successful validate or monitor runs. |
+| `quote-preview` | No | `false` | Requests anonymous publish cost estimates during validate or monitor when available. |
+| `conversion-hint-level` | No | `soft` | Preview comment guidance verbosity: `off`, `soft`, or `detailed`. |
+| `group-key` | No | skill directory | Optional grouping key for multi-skill monitor summaries. |
 
 ## Outputs
 
 | Output | Description |
 | --- | --- |
+| `preview-json` | Validate/monitor preview artifact payload (`skill-preview.v1`). |
+| `hcs28-json` | HCS-28 trust scoring payload generated in validate/monitor. |
+| `hcs28-score-total` | HCS-28 total score from validate/monitor. |
+| `preview-json-path` | Path to the generated preview JSON file. |
+| `status-url` | Lifecycle status/preview page URL when available. |
+| `trust-tier` | Lifecycle trust tier for the current state. |
+| `publish-readiness` | Lifecycle readiness summary (`ready`, `blocked`, `quoted`, `published`). |
+| `missing-requirements` | JSON array of requirements still blocking publish readiness. |
+| `estimated-credits-range` | Estimated publish credit range from quote-preview. |
+| `managed-comment-url` | Managed preview comment URL for PR runs. |
+| `managed-comment-status` | Managed preview comment status (`disabled`, `skipped`, `created`, `updated`, `unchanged`, `failed`). |
+| `managed-comment-reason` | Managed preview comment skip/failure reason when provided. |
+| `publish-comment-url` | Sticky publish lifecycle PR comment URL when publish annotations run. |
+| `publish-comment-status` | Publish comment status (`disabled`, `skipped`, `created`, `updated`, `unchanged`, `failed`). |
+| `release-annotation-status` | Release body block status (`disabled`, `skipped`, `created`, `updated`, `unchanged`, `failed`). |
+| `purchase-url` | HOL submit/purchase flow URL for credit setup. |
+| `publish-url` | HOL publish flow URL for the resolved skill. |
+| `verification-url` | HOL verification/domain-proof flow URL for trust upgrades. |
 | `published` | `true` when publish executed, `false` when skipped. |
-| `skip-reason` | Skip reason (currently `version-exists`). |
-| `skill-name` | Skill name from publish result. |
-| `skill-version` | Skill version from publish result. |
+| `skip-reason` | Skip reason (for example `version-exists`). |
+| `skill-name` | Skill name from resolved package metadata. |
+| `skill-version` | Skill version from resolved package metadata. |
 | `quote-id` | Broker quote identifier. |
 | `job-id` | Publish job identifier. |
 | `directory-topic-id` | Skill directory topic ID. |
 | `package-topic-id` | Skill package topic ID. |
 | `skill-json-hrl` | Canonical `hcs://...` reference for `skill.json`. |
-| `credits` | Credits consumed. |
+| `credits` | Credits quoted/consumed. |
 | `estimated-cost-hbar` | Estimated HBAR cost from quote. |
-| `skill-page-url` | Canonical skill detail page URL for the resolved `name@version`. |
-| `entity-url` | Machine-readable `entity.json` URL for the canonical skill page. |
-| `docs-url` | Canonical HOL docs URL for the registry. |
-| `openapi-url` | Canonical OpenAPI URL for the registry API. |
+| `skill-page-url` | Canonical skill detail page URL for resolved `name@version`. |
+| `entity-url` | Machine-readable `entity.json` URL for the skill page. |
+| `docs-url` | Canonical HOL docs URL for Registry Broker. |
+| `openapi-url` | Canonical OpenAPI URL for Registry Broker API. |
 | `install-url-pinned-skill-md` | Pinned `SKILL.md` resolver URL. |
 | `install-url-latest-skill-md` | Latest `SKILL.md` resolver URL. |
 | `install-url-pinned-manifest` | Pinned `manifest` resolver URL. |
 | `install-url-latest-manifest` | Latest `manifest` resolver URL. |
 | `install-metadata-pinned-url` | Pinned install metadata URL. |
 | `install-metadata-latest-url` | Latest install metadata URL. |
-| `badge-markdown` | Markdown badge snippet for the resolved version. |
-| `badge-html` | HTML badge snippet for the resolved version. |
-| `markdown-link` | Markdown link snippet for the canonical skill page. |
-| `html-link` | HTML link snippet for the canonical skill page. |
+| `badge-markdown` | Markdown badge snippet for resolved version. |
+| `badge-html` | HTML badge snippet for resolved version. |
+| `markdown-link` | Markdown link snippet for canonical skill page. |
+| `html-link` | HTML link snippet for canonical skill page. |
 | `readme-snippet` | README snippet with canonical install links. |
 | `docs-snippet` | Docs snippet with canonical HOL links. |
 | `citation-snippet` | Citation snippet pointing to canonical HOL metadata. |
 | `release-notes` | Release notes snippet with install links and badge markdown. |
-| `package-metadata-json` | JSON block for package metadata pointing at HOL canonical URLs. |
+| `package-metadata-json` | JSON block for metadata pointing to canonical HOL URLs. |
 | `codemeta-json` | CodeMeta document for the resolved skill version. |
 | `attested-kit-json` | Full attested distribution kit payload. |
-| `next-actions` | Post-publish checklist with the best distribution next steps. |
-| `annotation-target` | Annotation destination (`release:<id>`, `pr:<id>`, `none`, `failed`). |
+| `next-actions` | Suggested post-run next actions summary. |
+| `annotation-target` | Backward-compatible annotation destination (`release:<id>`, `pr:<id>`, `none`, `failed`). |
 | `indexnow-result` | IndexNow submission result when enabled. |
 | `result-json` | Full result payload as JSON string. |
 
@@ -391,29 +583,46 @@ An HRL looks like: `hcs://1/0.0.12345`
 
 ## Runtime Behavior
 
+`mode=validate`
+1. Discovers and validates package files in `skill-dir`.
+2. Resolves broker limits from `/skills/config`.
+3. Emits `skill-preview.v1` JSON plus lifecycle/share outputs.
+
+`mode=quote`
 1. Discovers and validates package files in `skill-dir`.
 2. Resolves broker limits from `/skills/config`.
 3. Checks if `name@version` already exists.
 4. Requests quote via `POST /skills/quote`.
-5. Publishes via `POST /skills/publish`.
-6. Polls `GET /skills/jobs/{jobId}` until completion.
-7. Emits outputs, step summary, and optional GitHub annotations.
+5. Emits quote metadata without publishing.
+
+`mode=publish`
+1. Discovers and validates package files in `skill-dir`.
+2. Resolves broker limits from `/skills/config`.
+3. Requests authenticated cost estimates via `POST /skills/quote`.
+4. Checks if `name@version` already exists.
+5. Publishes via `POST /skills/publish`, then polls `GET /skills/jobs/{jobId}` until completion.
+6. Upserts sticky publish annotations (PR comment and/or release body block) when enabled.
+7. Emits outputs, step summary, and distribution snippets.
 
 ## Idempotency and Failure Behavior
 
 - If `name@version` already exists, the action exits cleanly with `published=false` and `skip-reason=version-exists`.
 - Publish failures return structured output in `result-json` so CI can gate follow-up jobs.
 - Annotation failures do not hide publish status; `annotation-target` reports where comments were attempted.
+- Validate mode never quotes or publishes, and it does not require `RB_API_KEY`.
 
 ## Trust and Security Defaults
 
-- Recommended minimum permissions are `contents: write`, `pull-requests: write`, and `issues: write`.
+- Validate workflows should grant only the minimum permissions they need for checkout and comment updates.
+- Preview uploads are advanced and opt-in. Restrict them to trusted repo-owned workflows and grant `id-token: write` only on those jobs.
+- Trusted publishing is also advanced and opt-in. Only enable `publish-auth: github-oidc` on trusted repo-owned jobs that already need publish authority.
+- Publish workflows that annotate releases or PRs typically also need `contents: write`, `pull-requests: write`, and `issues: write`.
 - Store `RB_API_KEY` in repository or organization secrets.
 - If you do not need GitHub annotations, set `annotate: "false"` and omit `github-token`.
 - For strict supply-chain pinning, pin to a full commit SHA instead of `@v1`:
 
 ```yaml
-uses: hashgraph-online/skill-publish@93aee116a8a4b8d90dcde8cfb64628bc255becde
+uses: hashgraph-online/skill-publish@df6ae95e010d9792158a441eec9ac50d4d17139d
 ```
 
 - When annotations are disabled, this tighter permission set is sufficient:
@@ -428,10 +637,10 @@ permissions:
 | Symptom | Likely Cause | Fix |
 | --- | --- | --- |
 | `skip-reason=version-exists` | Same `name@version` already published | Bump `version` in `skill.json` and re-run. |
-| Quote request fails | Missing credits or invalid package metadata | Top up credits, then validate `skill.json` fields and size limits. |
+| Quote request fails | Missing credits or invalid package metadata | Top up credits, then validate package metadata or pass explicit `name` / `version` overrides if needed. |
 | Publish job times out | Broker load or long queue | Increase `poll-timeout-ms` (for example, `1200000`) and re-run. |
 | `published=true` but no PR/release annotation | Missing write scopes or missing `github-token` | Add `pull-requests: write`, `issues: write`, `contents: write`, and pass `github-token`. |
-| Missing file validation error | `SKILL.md` or `skill.json` not found under `skill-dir` | Verify folder structure and `skill-dir` path in workflow. |
+| Missing file validation error | `SKILL.md` not found under `skill-dir` | Verify folder structure and `skill-dir` path in workflow. |
 | API authentication error | Wrong or revoked API key | Regenerate key at `/registry/docs?tab=api-keys` and update `RB_API_KEY` secret. |
 
 ## How Verification Works (HCS-26)

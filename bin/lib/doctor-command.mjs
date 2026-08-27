@@ -1,7 +1,11 @@
 import path from 'node:path';
-import { requestJsonWithTimeout } from './broker-api.mjs';
+import { fetchBalanceDetails, fetchSkillsConfig } from './broker-api.mjs';
 import { loadCredential, resolveCredentialStorePath } from './credential-store.mjs';
-import { repairSkillPackage, readSkillPackageState } from './skill-package.mjs';
+import {
+  repairSkillPackage,
+  readSkillPackageState,
+  resolveSkillPackageMetadata,
+} from './skill-package.mjs';
 
 function normalizeBaseUrl(value) {
   const trimmed = String(value ?? '').trim();
@@ -44,17 +48,10 @@ function pushCheck(checks, status, label, detail, blocking = false) {
 
 function formatSkillPackageDetail(skillDir, state) {
   const label = path.relative(process.cwd(), skillDir) || '.';
-  if (!state.hasSkillMd || !state.hasSkillJson) {
-    const missing = [];
-    if (!state.hasSkillMd) {
-      missing.push('SKILL.md');
-    }
-    if (!state.hasSkillJson) {
-      missing.push('skill.json');
-    }
+  if (!state.hasSkillMd) {
     return {
       status: 'warn',
-      detail: `${label} missing ${missing.join(' and ')}`,
+      detail: `${label} missing SKILL.md`,
       meta: null,
     };
   }
@@ -65,19 +62,32 @@ function formatSkillPackageDetail(skillDir, state) {
       meta: null,
     };
   }
-  if (state.missingFields.length > 0) {
+  const normalizedSkillJson = resolveSkillPackageMetadata({
+    skillDir,
+    skillMdText: state.skillMdText,
+    parsedSkillJson: state.parsedSkillJson,
+  });
+  const metadataWarnings = state.missingFields.filter(
+    (field) => field !== 'skill.json',
+  );
+  if (metadataWarnings.length > 0) {
     return {
-      status: 'warn',
-      detail: `${label} missing metadata: ${state.missingFields.join(', ')}`,
-      meta: null,
+      status: 'pass',
+      detail: `${label} (${normalizedSkillJson.name}@${normalizedSkillJson.version}, synthesized metadata: ${metadataWarnings.join(', ')})`,
+      meta: {
+        name: normalizedSkillJson.name,
+        version: normalizedSkillJson.version,
+      },
     };
   }
   return {
     status: 'pass',
-    detail: `${label} (${state.parsedSkillJson.name}@${state.parsedSkillJson.version})`,
+    detail: state.hasSkillJson
+      ? `${label} (${normalizedSkillJson.name}@${normalizedSkillJson.version})`
+      : `${label} (${normalizedSkillJson.name}@${normalizedSkillJson.version}, synthesized metadata)`,
     meta: {
-      name: state.parsedSkillJson.name,
-      version: state.parsedSkillJson.version,
+      name: normalizedSkillJson.name,
+      version: normalizedSkillJson.version,
     },
   };
 }
@@ -94,7 +104,7 @@ async function checkBrokerReachability(baseUrl) {
   let lastError = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      await requestJsonWithTimeout(`${baseUrl}/skills/config`, {}, 12000);
+      await fetchSkillsConfig(baseUrl);
       return;
     } catch (error) {
       lastError = error;
@@ -163,11 +173,7 @@ export async function runDoctorCommand(options, positionals, context) {
     pushCheck(checks, 'pass', 'Credits balance', 'skipped (--local-only)');
   } else if (apiKey && accountId) {
     try {
-      const balanceQuery = new URLSearchParams({ accountId });
-      const response = await requestJsonWithTimeout(`${baseUrl}/credits/balance?${balanceQuery.toString()}`, {
-        'x-api-key': apiKey,
-        'x-account-id': accountId,
-      });
+      const response = await fetchBalanceDetails(baseUrl, apiKey, accountId);
       const balance = Number(response?.balance ?? 0);
       pushCheck(
         checks,

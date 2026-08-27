@@ -2,23 +2,151 @@ name: Release Assets
 
 on:
   push:
+    branches:
+      - main
     tags:
-      - 'v*'
+      - 'v*.*.*'
+  workflow_dispatch:
 
 permissions:
   contents: write
+  id-token: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  HOL_SKILL_PUBLISH_DOCS_URL: https://hol.org/registry/skills/publish
+
+concurrency:
+  group: skill-publish-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  release:
+  tag-main:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Determine release target
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(node -p "require('./package.json').version")"
+          tag="v${version}"
+
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if gh release view "${tag}" --repo "${GH_REPO}" >/dev/null 2>&1; then
+            echo "release_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create git tag for current package version
+        if: steps.meta.outputs.tag_exists != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git tag "${{ steps.meta.outputs.tag }}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${{ steps.meta.outputs.tag }}"
+
+      - name: Ensure GitHub release exists for current package version
+        if: steps.meta.outputs.release_exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${{ steps.meta.outputs.tag }}"
+          docs_line="- Documentation: ${HOL_SKILL_PUBLISH_DOCS_URL}"
+          notes_file="$(mktemp)"
+          printf '%s\n' "${docs_line}" > "${notes_file}"
+
+          gh release create "${tag}" \
+            --repo "${GH_REPO}" \
+            --title "${tag}" \
+            --generate-notes \
+            --notes-file "${notes_file}" \
+            action.yml \
+            entrypoint.mjs \
+            schemas/skill.schema.json \
+            examples/skill.json \
+            README.md \
+            CITATION.cff \
+            .zenodo.json \
+            apis.json \
+            llms.txt
+
+          rm -f "${notes_file}"
+
+      - name: Skip release creation when release already exists
+        if: steps.meta.outputs.release_exists == 'true'
+        run: echo "Release ${{ steps.meta.outputs.tag }} already exists."
+
+      - name: Check published npm version
+        id: package-version
+        run: |
+          PACKAGE_NAME="$(node -p "require('./package.json').name")"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          echo "package_name=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"
+          echo "package_version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
+          if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+            echo "Package ${PACKAGE_NAME}@${PACKAGE_VERSION} is already published. Skipping npm publish."
+            exit 0
+          fi
+          echo "already_published=false" >> "$GITHUB_OUTPUT"
+
+      - name: Verify npm token
+        if: steps.package-version.outputs.already_published != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "NPM_TOKEN secret is required."
+            exit 1
+          fi
+
+      - name: Publish package from main release workflow
+        if: steps.package-version.outputs.already_published != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
 
       - name: Install validation dependencies
         run: npm install --no-save ajv@8 ajv-formats@3
@@ -60,3 +188,28 @@ jobs:
             .zenodo.json
             apis.json
             llms.txt
+
+      - name: Ensure release includes canonical docs URL
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${GITHUB_REF_NAME}"
+          docs_line="- Documentation: ${HOL_SKILL_PUBLISH_DOCS_URL}"
+          body="$(gh release view "${tag}" --repo "${GH_REPO}" --json body --jq '.body // ""')"
+
+          if printf '%s' "${body}" | grep -Fq "${HOL_SKILL_PUBLISH_DOCS_URL}"; then
+            echo "Release ${tag} already contains canonical docs URL."
+            exit 0
+          fi
+
+          notes_file="$(mktemp)"
+          {
+            printf '%s\n' "${body}"
+            printf '\n%s\n' "${docs_line}"
+          } > "${notes_file}"
+          gh release edit "${tag}" --repo "${GH_REPO}" --notes-file "${notes_file}"
+          rm -f "${notes_file}"

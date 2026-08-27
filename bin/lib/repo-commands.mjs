@@ -1,8 +1,17 @@
-import { constants } from 'node:fs';
-import { access, mkdir, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { applyDistributionKit } from './apply-distribution-kit.mjs';
 import { buildDistributionKit } from './distribution-kit.mjs';
+import {
+  buildManualWorkflow,
+  buildReleaseWorkflow,
+  buildValidateWorkflow,
+  inspectSkillRepo,
+  isDirectory,
+  normalizeSkillDir,
+  pathExists,
+  toPosix,
+} from './repo-skill-utils.mjs';
 import { buildSkillJson, buildSkillMarkdown, listSkillPresetIds, resolveSkillPreset } from './skill-presets.mjs';
 
 function normalizeName(value) {
@@ -37,151 +46,6 @@ function normalizeBoolean(value, fallback) {
   return lowered === '1' || lowered === 'true' || lowered === 'yes';
 }
 
-function normalizeSkillDir(value) {
-  const trimmed = toPosix(String(value ?? '').trim());
-  if (!trimmed) {
-    throw new Error('Skill directory cannot be empty.');
-  }
-  if (trimmed.startsWith('/')) {
-    throw new Error('Skill directory must be relative.');
-  }
-  if (trimmed.includes('..')) {
-    throw new Error('Skill directory cannot contain parent path segments.');
-  }
-  if (!/^[A-Za-z0-9._/-]+$/u.test(trimmed)) {
-    throw new Error('Skill directory contains invalid characters.');
-  }
-  return trimmed;
-}
-
-function toPosix(relativePath) {
-  return relativePath.split(path.sep).join(path.posix.sep);
-}
-
-async function pathExists(targetPath) {
-  try {
-    await access(targetPath, constants.F_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function isDirectory(targetPath) {
-  try {
-    await access(targetPath, constants.R_OK);
-    const entries = await readdir(targetPath);
-    return Array.isArray(entries);
-  } catch {
-    return false;
-  }
-}
-
-async function detectSkillDir(repoDir) {
-  const rootSkillMd = path.join(repoDir, 'SKILL.md');
-  const rootSkillJson = path.join(repoDir, 'skill.json');
-  if ((await pathExists(rootSkillMd)) && (await pathExists(rootSkillJson))) {
-    return '.';
-  }
-
-  const skillsDir = path.join(repoDir, 'skills');
-  if (!(await isDirectory(skillsDir))) {
-    return '';
-  }
-
-  const children = await readdir(skillsDir, { withFileTypes: true });
-  for (const child of children) {
-    if (!child.isDirectory()) {
-      continue;
-    }
-    const candidate = path.join('skills', child.name);
-    const candidateAbs = path.join(repoDir, candidate);
-    if (
-      (await pathExists(path.join(candidateAbs, 'SKILL.md'))) &&
-      (await pathExists(path.join(candidateAbs, 'skill.json')))
-    ) {
-      return toPosix(candidate);
-    }
-  }
-
-  return '';
-}
-
-function buildReleaseWorkflow(skillDir, annotate) {
-  return `name: Publish Skill
-
-on:
-  release:
-    types: [published]
-
-jobs:
-  publish:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-      issues: write
-    steps:
-      - uses: actions/checkout@v4
-      - name: Publish skill package
-        uses: hashgraph-online/skill-publish@v1
-        with:
-          api-key: \${{ secrets.RB_API_KEY }}
-          skill-dir: ${skillDir}
-          annotate: "${annotate ? 'true' : 'false'}"
-          submit-indexnow: "true"
-          github-token: \${{ github.token }}
-`;
-}
-
-function buildManualWorkflow(skillDir, annotate) {
-  return `name: Publish Skill (Manual)
-
-on:
-  workflow_dispatch:
-    inputs:
-      publish_target:
-        type: choice
-        required: true
-        default: staging
-        options:
-          - staging
-          - production
-      version:
-        type: string
-        required: false
-
-jobs:
-  publish:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-      issues: write
-    steps:
-      - uses: actions/checkout@v4
-      - name: Resolve broker API URL
-        id: target
-        shell: bash
-        run: |
-          if [[ "\${{ inputs.publish_target }}" == "staging" ]]; then
-            echo "api_base_url=https://registry-staging.hol.org/registry/api/v1" >> "$GITHUB_OUTPUT"
-          else
-            echo "api_base_url=https://hol.org/registry/api/v1" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Publish skill package
-        uses: hashgraph-online/skill-publish@v1
-        with:
-          api-base-url: \${{ steps.target.outputs.api_base_url }}
-          api-key: \${{ secrets.RB_API_KEY }}
-          skill-dir: ${skillDir}
-          version: \${{ inputs.version }}
-          annotate: "${annotate ? 'true' : 'false'}"
-          submit-indexnow: "true"
-          github-token: \${{ github.token }}
-`;
-}
-
 function buildWorkflowTemplate(skillDir, trigger, annotate) {
   if (trigger === 'manual') {
     return buildManualWorkflow(skillDir, annotate);
@@ -202,6 +66,30 @@ async function writeWorkflow(params) {
   const template = buildWorkflowTemplate(params.skillDir, params.trigger, params.annotate);
   await writeFile(outputPath, `${template}\n`, 'utf8');
   return outputPath;
+}
+
+async function writeValidateWorkflow(params) {
+  const outputPath = path.join(params.repoDir, params.workflowPath);
+  const outputDir = path.dirname(outputPath);
+  const exists = await pathExists(outputPath);
+  if (exists && !params.force) {
+    throw new Error(
+      `Workflow already exists at ${path.relative(process.cwd(), outputPath)}. Use --force to overwrite.`,
+    );
+  }
+  await mkdir(outputDir, { recursive: true });
+  const template = buildValidateWorkflow(params.skillDir, params.workflowPath);
+  await writeFile(outputPath, `${template}\n`, 'utf8');
+  return outputPath;
+}
+
+function ensureDistinctWorkflowPaths(context, workflowPath, validateWorkflowPath, commandName) {
+  if (workflowPath === validateWorkflowPath) {
+    context.fail(
+      'Publish and validate workflows must use different paths. Pass a unique --validate-workflow-path or --workflow-path.',
+      commandName,
+    );
+  }
 }
 
 async function directoryHasContent(dirPath) {
@@ -242,11 +130,12 @@ async function writeRepoReadme(repoDir, skillName, skillDir) {
 
 This repository contains an HCS-26 skill package and CI publishing workflow powered by \`skill-publish\`.
 
-## Publish flow
+## Validate-first flow
 
-1. Add \`RB_API_KEY\` as a GitHub repository secret.
-2. Update files under \`${skillDir}\`.
-3. Create a GitHub release to trigger publish.
+1. Open a pull request to run fork-safe validate-only CI first.
+2. Update files under \`${skillDir}\` until validation passes.
+3. Add \`RB_API_KEY\` only when you are ready to quote and publish immutable releases.
+4. Create a GitHub release to trigger publish.
 `;
 
   await writeFile(readmePath, `${readme}\n`, 'utf8');
@@ -307,20 +196,48 @@ export async function runSetupActionCommand(options, positionals, context) {
     context.fail(`Repository directory not found: ${repoDir}`, 'setup-action');
   }
 
-  const detectedSkillDir = await detectSkillDir(repoDir);
-  const skillDirValue = String(options['skill-dir'] ?? detectedSkillDir).trim();
+  const inspection = await inspectSkillRepo(repoDir);
+  const skillDirValue = String(options['skill-dir'] ?? inspection.recommendedSkillDir).trim();
   if (!skillDirValue) {
+    const partialSummary = inspection.partials
+      .map((entry) => `${entry.dir} (missing ${entry.missing.join(', ')})`)
+      .join('; ');
     context.fail(
-      'Could not detect skill directory. Pass --skill-dir (for example --skill-dir skills/my-skill).',
+      inspection.packages.length > 1
+        ? `Multiple skill packages detected (${inspection.packages.map((entry) => entry.dir).join(', ')}). Pass --skill-dir explicitly.`
+        : partialSummary
+          ? `No valid HOL skill package found. Partial candidates: ${partialSummary}. Use scaffold-repo to create a package or complete the missing files first.`
+          : 'No valid HOL skill package found. Use scaffold-repo to create one before setup-action.',
       'setup-action',
     );
   }
   const requestedSkillDir = normalizeSkillDir(skillDirValue);
+  const selectedPackage = inspection.packages.find((entry) => entry.dir === requestedSkillDir);
+  if (!selectedPackage) {
+    const matchingPartial = inspection.partials.find((entry) => entry.dir === requestedSkillDir);
+    if (matchingPartial) {
+      context.fail(
+        `Skill directory ${requestedSkillDir} is missing ${matchingPartial.missing.join(', ')}. Complete the HOL package before generating workflows.`,
+        'setup-action',
+      );
+    }
+    context.fail(
+      `Skill directory ${requestedSkillDir} does not contain SKILL.md.`,
+      'setup-action',
+    );
+  }
 
   const workflowPath = String(options['workflow-path'] ?? '.github/workflows/publish-skill.yml').trim();
+  const validateWorkflowPath = String(
+    options['validate-workflow-path'] ?? '.github/workflows/validate-skill.yml',
+  ).trim();
   const trigger = normalizeTrigger(options.trigger);
   const annotate = normalizeBoolean(options.annotate, true);
+  const withValidate = normalizeBoolean(options['with-validate'], true);
   const force = Boolean(options.force || options.yes);
+  if (withValidate) {
+    ensureDistinctWorkflowPaths(context, workflowPath, validateWorkflowPath, 'setup-action');
+  }
 
   const outputPath = await writeWorkflow({
     repoDir,
@@ -330,11 +247,68 @@ export async function runSetupActionCommand(options, positionals, context) {
     annotate,
     force,
   });
+  const validateOutputPath = withValidate
+    ? await writeValidateWorkflow({
+        repoDir,
+        skillDir: requestedSkillDir,
+        workflowPath: validateWorkflowPath,
+        force,
+      })
+    : null;
 
   process.stdout.write(`${context.colors.green('Configured')} ${context.colors.bold(path.relative(process.cwd(), outputPath))}\n`);
+  if (validateOutputPath) {
+    process.stdout.write(`${context.colors.green('Configured')} ${context.colors.bold(path.relative(process.cwd(), validateOutputPath))}\n`);
+  }
   process.stdout.write(`Trigger: ${trigger}\n`);
   process.stdout.write(`Skill dir: ${requestedSkillDir}\n`);
-  process.stdout.write('Next: add RB_API_KEY to repository secrets, then push and run the workflow.\n');
+  process.stdout.write(
+    withValidate
+      ? 'Next: open a pull request to exercise validate-only CI, then add RB_API_KEY for release publishing.\n'
+      : 'Next: add RB_API_KEY to repository secrets, then push and run the workflow.\n',
+  );
+}
+
+export async function runInspectRepoCommand(options, positionals, context) {
+  const repoDir = path.resolve(process.cwd(), positionals[0] ?? options['repo-dir'] ?? '.');
+  if (!(await isDirectory(repoDir))) {
+    context.fail(`Repository directory not found: ${repoDir}`, 'inspect-repo');
+  }
+
+  const inspection = await inspectSkillRepo(repoDir);
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(inspection, null, 2)}\n`);
+    return;
+  }
+
+  process.stdout.write(`Repository: ${repoDir}\n`);
+  process.stdout.write(`Ready for setup-action: ${inspection.readyForSetupAction ? 'yes' : 'no'}\n`);
+  if (inspection.packages.length > 0) {
+    process.stdout.write(`Detected skill packages:\n`);
+    for (const entry of inspection.packages) {
+      process.stdout.write(`- ${entry.dir}\n`);
+    }
+  } else {
+    process.stdout.write('Detected skill packages:\n- none\n');
+  }
+
+  if (inspection.partials.length > 0) {
+    process.stdout.write(`Partial skill-like directories:\n`);
+    for (const entry of inspection.partials) {
+      process.stdout.write(`- ${entry.dir} (missing ${entry.missing.join(', ')})\n`);
+    }
+  }
+
+  if (inspection.recommendedSkillDir) {
+    process.stdout.write(`Recommended skill dir: ${inspection.recommendedSkillDir}\n`);
+  }
+  if (inspection.issues.length > 0) {
+    process.stdout.write('Issues:\n');
+    for (const issue of inspection.issues) {
+      process.stdout.write(`- ${issue}\n`);
+    }
+  }
+  process.stdout.write(`Next action: ${inspection.nextAction}\n`);
 }
 
 export async function runScaffoldRepoCommand(options, positionals, context) {
@@ -367,7 +341,14 @@ export async function runScaffoldRepoCommand(options, positionals, context) {
   const skillDir = normalizeSkillDir(options['skill-dir'] ?? `skills/${skillName}`);
   const trigger = normalizeTrigger(options.trigger);
   const workflowPath = String(options['workflow-path'] ?? '.github/workflows/publish-skill.yml').trim();
+  const validateWorkflowPath = String(
+    options['validate-workflow-path'] ?? '.github/workflows/validate-skill.yml',
+  ).trim();
   const annotate = normalizeBoolean(options.annotate, true);
+  const withValidate = normalizeBoolean(options['with-validate'], true);
+  if (withValidate) {
+    ensureDistinctWorkflowPaths(context, workflowPath, validateWorkflowPath, 'scaffold-repo');
+  }
 
   const skillJson = await writeSkillPackage({
     repoDir: targetDir,
@@ -386,6 +367,14 @@ export async function runScaffoldRepoCommand(options, positionals, context) {
     annotate,
     force: true,
   });
+  const validateWorkflowOutput = withValidate
+    ? await writeValidateWorkflow({
+        repoDir: targetDir,
+        skillDir,
+        workflowPath: validateWorkflowPath,
+        force: true,
+      })
+    : null;
   await writeRepoReadme(targetDir, skillName, skillDir);
   await writeRepoGitignore(targetDir);
   await writeScaffoldDistribution(targetDir, skillJson);
@@ -396,5 +385,14 @@ export async function runScaffoldRepoCommand(options, positionals, context) {
   }
   process.stdout.write(`Skill package: ${toPosix(path.join(path.relative(process.cwd(), targetDir), skillDir))}\n`);
   process.stdout.write(`Workflow: ${path.relative(process.cwd(), workflowOutput)}\n`);
-  process.stdout.write('Next: `cd` into the repo, add RB_API_KEY in GitHub secrets, then create a release.\n');
+  if (validateWorkflowOutput) {
+    process.stdout.write(
+      `Validate workflow: ${path.relative(process.cwd(), validateWorkflowOutput)}\n`,
+    );
+  }
+  process.stdout.write(
+    withValidate
+      ? 'Next: `cd` into the repo, push a PR to exercise validate-only CI, then add RB_API_KEY in GitHub secrets for release publishing.\n'
+      : 'Next: `cd` into the repo, add RB_API_KEY in GitHub secrets, then create a release.\n',
+  );
 }

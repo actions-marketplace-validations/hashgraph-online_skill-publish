@@ -5,6 +5,8 @@ export const COMMAND_ALIASES = new Map([
   ['validate', 'validate'],
   ['check', 'validate'],
   ['v', 'validate'],
+  ['monitor', 'monitor'],
+  ['mon', 'monitor'],
   ['quote', 'quote'],
   ['q', 'quote'],
   ['create', 'create'],
@@ -27,6 +29,9 @@ export const COMMAND_ALIASES = new Map([
   ['scaffold-repo', 'scaffold-repo'],
   ['scaffold', 'scaffold-repo'],
   ['bootstrap', 'scaffold-repo'],
+  ['inspect-repo', 'inspect-repo'],
+  ['inspect', 'inspect-repo'],
+  ['qualify-repo', 'inspect-repo'],
   ['doctor', 'doctor'],
   ['diag', 'doctor'],
   ['d', 'doctor'],
@@ -60,6 +65,7 @@ Getting Started:
   doctor [dir]        Run readiness checks for environment + skill package
   setup-action [dir]  Add a GitHub publish workflow to an existing skill repo
   scaffold-repo [dir] Scaffold a new skill repo with package + workflow
+  inspect-repo [dir]  Inspect a repo for real HOL skill packages before adding workflows
   badge [dir]            Generate canonical badge snippets and URLs
   install-url [dir]      Generate pinned/latest install URLs
   release-notes [dir]    Generate release-ready markdown for a published version
@@ -69,10 +75,11 @@ Getting Started:
   submit-indexnow [dir]  Submit canonical skill URLs to IndexNow
 
 Core Commands:
-  init [dir]          Scaffold SKILL.md + skill.json
+  init [dir]          Scaffold SKILL.md with generated metadata defaults
   validate [dir]      Validate a skill package locally
-  quote [dir]         Validate package and fetch publish quote
-  publish [dir]       Validate, quote, and publish a skill package
+  monitor [dir]       Validate and compare current state with broker lifecycle signals
+  quote [dir]         Validate package and fetch an authenticated publish quote
+  publish [dir]       Validate, quote, and publish a credit-funded skill release
   help [command]      Show help for a command
 
 Examples:
@@ -85,6 +92,7 @@ Examples:
   npx skill-publish create ./weather-skill --name weather-skill --preset api
   npx skill-publish setup-action . --skill-dir skills/my-skill
   npx skill-publish scaffold-repo ./weather-skill --name weather-skill --preset api
+  npx skill-publish inspect-repo .
   npx skill-publish badge ./skills/weather-skill
   npx skill-publish install-url ./skills/weather-skill --format json
   npx skill-publish release-notes ./skills/weather-skill
@@ -96,8 +104,10 @@ Examples:
   npx skill-publish doctor ./skills/weather-skill --fix --local-only
   npx skill-publish init ./skills/weather-skill
   npx skill-publish validate ./skills/weather-skill
-  npx skill-publish quote ./skills/weather-skill
-  npx skill-publish publish ./skills/weather-skill
+  npx skill-publish monitor ./skills/weather-skill
+  npx skill-publish quote --skill-dir ./skills/weather-skill
+  npx skill-publish publish --skill-dir ./skills/weather-skill
+  npx skill-publish --mode validate --skill-dir ./skills/weather-skill
 
 Legacy usage still works:
   RB_API_KEY=rbk_xxx npx skill-publish --skill-dir ./skills/weather-skill
@@ -105,6 +115,7 @@ Legacy usage still works:
 Global flags:
   -h, --help            Show help
   -v, --version         Show CLI version
+  --mode <mode>         Run validate, monitor, quote, or publish through the top-level command
   --no-color            Disable ANSI colors
   --non-interactive     Disable interactive prompts
 `;
@@ -149,6 +160,18 @@ Options:
   --version <version>          Override version from skill.json
   --json                       Print machine-readable summary
 `,
+  monitor: `skill-publish monitor [dir]
+
+Validates the package, compares the current repo state with broker lifecycle signals, and emits low-noise publish readiness outputs without publishing.
+
+Options:
+  --api-base-url <url>         API base URL (default: https://hol.org/registry/api/v1)
+  --skill-dir <dir>            Skill directory; [dir] positional also supported
+  --name <name>                Override name from skill.json
+  --version <version>          Override version from skill.json
+  --quote-preview <bool>       Request anonymous publish cost estimate when available
+  --json                       Print machine-readable summary
+`,
   quote: `skill-publish quote [dir]
 
 Validates package and requests a publish quote without creating a publish job. Uses the same safe file exclusion rules as publish.
@@ -164,7 +187,7 @@ Options:
 `,
   init: `skill-publish init [dir]
 
-Scaffolds a new skill package with SKILL.md + skill.json.
+Scaffolds a new skill package with SKILL.md and a generated skill.json template.
 
 Options:
   --name <name>                Skill name (defaults to folder name)
@@ -258,19 +281,30 @@ Options:
 `,
   'setup-action': `skill-publish setup-action [repoDir]
 
-Adds a skill-publish GitHub Actions workflow to an existing skill repository.
+Adds a skill-publish GitHub Actions workflow to an existing repository that already contains a valid HOL skill package. The generated validate workflow is fork-safe by default and stages only canonical package files.
 
 Options:
   --repo-dir <dir>             Repository directory (or pass [repoDir] positional)
   --skill-dir <dir>            Skill package directory (auto-detected if omitted)
   --workflow-path <path>       Workflow output path (default: .github/workflows/publish-skill.yml)
+  --validate-workflow-path <path>
+                               Validate workflow output path (default: .github/workflows/validate-skill.yml)
   --trigger <mode>             Workflow trigger: release | manual (default: release)
+  --with-validate <bool>       Also add a pull-request validate-only workflow (default: true)
   --annotate <bool>            Enable release/PR annotations (default: true)
   --force                      Overwrite existing workflow file
 `,
+  'inspect-repo': `skill-publish inspect-repo [repoDir]
+
+Inspects an existing repository for valid HOL skill packages before setup-action or outreach. A valid package must contain SKILL.md in the same directory; skill.json is optional and will be synthesized when absent.
+
+Options:
+  --repo-dir <dir>             Repository directory (or pass [repoDir] positional)
+  --json                       Print machine-readable summary
+`,
   'scaffold-repo': `skill-publish scaffold-repo [repoDir]
 
-Scaffolds a new skill repository with package files and publish workflow.
+Scaffolds a new skill repository with package files and publish workflow. The generated validate workflow is fork-safe by default and keeps validation fully local.
 
 Options:
   --repo-dir <dir>             Repository directory (or pass [repoDir] positional)
@@ -280,7 +314,10 @@ Options:
   --preset <name>              general|api|docs|mcp|assistant|monorepo
   --skill-dir <dir>            Skill package directory (default: skills/<name>)
   --workflow-path <path>       Workflow output path (default: .github/workflows/publish-skill.yml)
+  --validate-workflow-path <path>
+                               Validate workflow output path (default: .github/workflows/validate-skill.yml)
   --trigger <mode>             Workflow trigger: release | manual (default: release)
+  --with-validate <bool>       Also add a pull-request validate-only workflow (default: true)
   --annotate <bool>            Enable release/PR annotations (default: true)
   --force                      Allow scaffolding into a non-empty directory
 `,
@@ -293,7 +330,7 @@ Options:
   --api-key <key>              API key (or RB_API_KEY env var / local credential store)
   --account-id <id>            Hedera account ID for balance checks
   --skill-dir <dir>            Skill directory; [dir] positional also supported
-  --fix                        Repair missing SKILL.md, invalid skill.json, and missing required metadata
+  --fix                        Repair missing SKILL.md, invalid skill.json, and synthesize missing metadata
   --local-only                 Skip broker/auth/credits checks and only verify local package readiness
   --store-path <path>          Optional path for local credential store
   --json                       Print machine-readable summary

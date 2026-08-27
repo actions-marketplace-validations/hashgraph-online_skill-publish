@@ -1,12 +1,65 @@
 import { readFile, stat, appendFile } from 'node:fs/promises';
 import path from 'node:path';
+import {
+  fetchSkillPublishJob,
+  fetchSkillQuotePreview,
+  fetchSkillStatusByRepo,
+  fetchSkillsConfig,
+  listSkillReleases,
+  publishSkill as publishSkillRequest,
+  quoteSkillPublish as quoteSkillPublishRequest,
+  exchangeSkillPublishApiKeyFromGithubOidc,
+  uploadSkillPreviewFromGithubOidc,
+} from './bin/lib/broker-api.mjs';
 import { buildDistributionKit, normalizeApiBaseUrl } from './bin/lib/distribution-kit.mjs';
+import { buildHcs28Fallback, computeHcs28TrustPreview } from './bin/lib/hcs-28.mjs';
 import { submitToIndexNow } from './bin/lib/indexnow.mjs';
 import { discoverSkillPackageFiles } from './bin/lib/package-files.mjs';
+import { writeSkillPreviewReport } from './bin/lib/preview-output.mjs';
+import {
+  buildSkillPreviewReport,
+  formatPreviewNextActions,
+} from './bin/lib/preview-report.mjs';
+import {
+  readSkillPackageState,
+  resolveSkillPackageMetadata,
+} from './bin/lib/skill-package.mjs';
+import {
+  buildManagedCommentBody,
+  buildManagedCommentMarker,
+  buildPreviewCommentMetadata,
+  buildManagedCommentStateSignature,
+  extractManagedCommentMetadata,
+  extractManagedCommentState,
+  shouldPublishManagedComment,
+} from './bin/lib/managed-comments.mjs';
+import {
+  buildPublishCommentMarker,
+  buildReleaseBlockMarker,
+  buildStateSignature,
+  decodeCommentMetadata,
+  encodeCommentMetadata,
+} from './bin/lib/comment-metadata.mjs';
+import {
+  renderPublishComment,
+  renderReleaseBlock,
+} from './bin/lib/comment-renderer.mjs';
+import {
+  createAnnotationResult,
+  createGitHubApiRequest,
+  findExistingCommentByMarker,
+  listIssueComments,
+  resolveAssociatedPullRequest,
+  upsertIssueComment,
+  upsertReleaseBodyBlock,
+} from './bin/lib/github-annotations.mjs';
+import { normalizeText } from './bin/lib/text-utils.mjs';
 
 const stdout = (message) => process.stdout.write(`${message}\n`);
 const stderr = (message) => process.stderr.write(`${message}\n`);
 const printJson = (value) => process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+const packageJsonPath = new URL('./package.json', import.meta.url);
+let cachedToolVersion = null;
 
 class ActionError extends Error {
   constructor(message, options = {}) {
@@ -68,6 +121,20 @@ const toBoolean = (value, defaultValue) => {
 const parseNumber = (value, fallback) => {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const getToolVersion = async () => {
+  if (cachedToolVersion) {
+    return cachedToolVersion;
+  }
+  try {
+    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8'));
+    const version = String(packageJson?.version ?? '').trim();
+    cachedToolVersion = version || '0.0.0';
+  } catch {
+    cachedToolVersion = '0.0.0';
+  }
+  return cachedToolVersion;
 };
 
 const isStableRegistryVersion = (value) => {
@@ -143,34 +210,6 @@ const resolveRole = (filePath) => {
   return 'file';
 };
 
-const buildApiUrl = (baseUrl, endpointPath, query = null) => {
-  const sanitizedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-  const normalizedPath = endpointPath.startsWith('/') ? endpointPath : `/${endpointPath}`;
-  const url = new URL(`${sanitizedBase}${normalizedPath}`);
-  if (query) {
-    for (const [key, value] of Object.entries(query)) {
-      if (value === null || value === undefined || value === '') {
-        continue;
-      }
-      url.searchParams.set(key, String(value));
-    }
-  }
-  return url.toString();
-};
-
-const summarizeErrorBody = async (response) => {
-  const text = await response.text();
-  if (!text) {
-    return '';
-  }
-  try {
-    const parsed = JSON.parse(text);
-    return JSON.stringify(parsed);
-  } catch {
-    return text;
-  }
-};
-
 const sleep = (delayMs) =>
   new Promise((resolve) => {
     setTimeout(resolve, delayMs);
@@ -209,51 +248,15 @@ const isRetryableRequestError = (error) => {
   return RETRYABLE_ERROR_MARKERS.some((marker) => message.includes(marker));
 };
 
-const requestJson = async (params) => {
-  const {
-    method,
-    url,
-    apiKey,
-    body,
-    signal,
-  } = params;
-  let response;
-  try {
-    response = await fetch(url, {
-      method,
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': apiKey,
-      },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-      signal,
-    });
-  } catch (error) {
-    throw new ActionError(
-      `${method} ${url} failed: ${error instanceof Error ? error.message : String(error)}`,
-      {
-        code: extractErrorCode(error),
-      },
-    );
-  }
-  if (!response.ok) {
-    const bodySummary = await summarizeErrorBody(response);
-    throw new ActionError(
-      `${method} ${url} failed with ${response.status}${bodySummary ? `: ${bodySummary}` : ''}`,
-      {
-        statusCode: response.status,
-      },
-    );
-  }
-  return response.json();
-};
-
-const requestJsonWithRetry = async (params) => {
-  const attempts = Number.isFinite(params.attempts) && params.attempts > 0 ? Math.floor(params.attempts) : 1;
+const executeWithRetry = async (params) => {
+  const attempts =
+    Number.isFinite(params.attempts) && params.attempts > 0
+      ? Math.floor(params.attempts)
+      : 1;
   let lastError = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return await requestJson(params);
+      return await params.operation();
     } catch (error) {
       lastError = error;
       if (attempt >= attempts || !isRetryableRequestError(error)) {
@@ -261,7 +264,7 @@ const requestJsonWithRetry = async (params) => {
       }
       const delayMs = Math.min(10_000, 1_000 * attempt);
       stderr(
-        `Transient request failure on ${params.method} ${params.url}; retrying in ${delayMs}ms (retry ${attempt}/${attempts - 1}).`,
+        `Transient request failure on ${params.label}; retrying in ${delayMs}ms (retry ${attempt}/${attempts - 1}).`,
       );
       await sleep(delayMs);
     }
@@ -270,16 +273,21 @@ const requestJsonWithRetry = async (params) => {
 };
 
 const findExistingSkillVersion = async (params) => {
-  const { apiBaseUrl, apiKey, name, version } = params;
-  const response = await requestJsonWithRetry({
-    method: 'GET',
-    url: buildApiUrl(apiBaseUrl, '/skills', {
-      name,
-      version,
-      limit: 20,
-    }),
-    apiKey,
+  const { apiBaseUrl, apiKey, accountId, name, version } = params;
+  const response = await executeWithRetry({
+    label: 'GET /skills',
     attempts: 3,
+    operation: () =>
+      listSkillReleases({
+        baseUrl: apiBaseUrl,
+        apiKey,
+        accountId,
+        query: {
+          name,
+          version,
+          limit: 20,
+        },
+      }),
   });
 
   const items = Array.isArray(response?.items) ? response.items : [];
@@ -310,6 +318,44 @@ const parseEventPayload = async () => {
   }
 };
 
+const readPackageVersion = async () => {
+  const packageJsonPath = path.join(process.cwd(), 'package.json');
+  try {
+    const raw = await readFile(packageJsonPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    return typeof parsed?.version === 'string' && parsed.version.trim()
+      ? parsed.version.trim()
+      : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+};
+
+const normalizeMarkerSegment = (value) =>
+  String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, '-')
+    .replace(/^-+|-+$/gu, '');
+
+const buildDefaultManagedCommentGroupKey = (params) => {
+  const repositorySegment = normalizeMarkerSegment(
+    String(params.repository ?? '').replace(/\//gu, '-'),
+  );
+  const skillSegment =
+    normalizeMarkerSegment(params.skillName) ||
+    normalizeMarkerSegment(params.skillDir) ||
+    'skill';
+  const prNumber = Number(params.pullNumber);
+  if (Number.isFinite(prNumber) && prNumber > 0) {
+    return `pr-${prNumber}-${skillSegment}`;
+  }
+  if (repositorySegment) {
+    return `${repositorySegment}-${skillSegment}`;
+  }
+  return skillSegment || 'default';
+};
+
 const setActionOutput = async (name, value) => {
   const outputPath = getEnv('GITHUB_OUTPUT');
   if (!outputPath) {
@@ -326,6 +372,410 @@ const appendStepSummary = async (markdown) => {
     return;
   }
   await appendFile(summaryPath, `${markdown}\n`);
+};
+
+const summarizeErrorBody = async (response) => {
+  try {
+    const text = await response.text();
+    const trimmed = text.trim();
+    return trimmed.length > 1024 ? `${trimmed.slice(0, 1024)}...` : trimmed;
+  } catch {
+    return '';
+  }
+};
+
+const parseJsonResponse = async (response, fallbackMessage) => {
+  const text = await response.text();
+  if (!text) {
+    throw new ActionError(fallbackMessage);
+  }
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new ActionError(
+      `${fallbackMessage}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+};
+
+const getWorkflowRunUrl = () => {
+  const repository = getEnv('GITHUB_REPOSITORY');
+  const serverUrl = getEnv('GITHUB_SERVER_URL', 'https://github.com');
+  const runId = getEnv('GITHUB_RUN_ID');
+  if (!repository) {
+    return '';
+  }
+  if (runId) {
+    return `${serverUrl}/${repository}/actions/runs/${runId}`;
+  }
+  return `${serverUrl}/${repository}/actions`;
+};
+
+const TRUSTED_OIDC_EVENTS = new Set([
+  'workflow_dispatch',
+  'push',
+  'release',
+  'schedule',
+  'repository_dispatch',
+]);
+
+const canUsePreviewOidc = (eventName) =>
+  TRUSTED_OIDC_EVENTS.has(String(eventName ?? '').trim().toLowerCase());
+
+const getGithubOidcToken = async () => {
+  const requestUrl = getEnv('ACTIONS_ID_TOKEN_REQUEST_URL');
+  const requestToken = getEnv('ACTIONS_ID_TOKEN_REQUEST_TOKEN');
+  if (!requestUrl || !requestToken) {
+    return '';
+  }
+  const response = await fetch(requestUrl, {
+    method: 'GET',
+    headers: {
+      authorization: `Bearer ${requestToken}`,
+    },
+  });
+  if (!response.ok) {
+    const details = await summarizeErrorBody(response);
+    throw new ActionError(
+      `GitHub OIDC token request failed with ${response.status}${details ? `: ${details}` : ''}`,
+    );
+  }
+  const payload = await parseJsonResponse(
+    response,
+    'GitHub OIDC token response was not valid JSON',
+  );
+  const token = String(payload?.value ?? '').trim();
+  if (!token) {
+    throw new ActionError('GitHub OIDC token response did not include value.');
+  }
+  return token;
+};
+
+const uploadPreviewRecord = async (params) => {
+  const oidcToken = await getGithubOidcToken();
+  if (!oidcToken) {
+    return null;
+  }
+  return uploadSkillPreviewFromGithubOidc({
+    baseUrl: params.apiBaseUrl,
+    token: oidcToken,
+    report: params.report,
+  });
+};
+
+const exchangePublishCredentialsFromGithubOidc = async (params) => {
+  const oidcToken = await getGithubOidcToken();
+  if (!oidcToken) {
+    throw new ActionError(
+      'GitHub OIDC token is unavailable. Grant job-level id-token: write on a trusted repo-owned workflow to use publish-auth=github-oidc.',
+    );
+  }
+  const response = await exchangeSkillPublishApiKeyFromGithubOidc({
+    baseUrl: params.apiBaseUrl,
+    token: oidcToken,
+  });
+  const apiKey = String(response?.apiKey ?? '').trim();
+  const accountId = String(response?.accountId ?? '').trim();
+  if (!apiKey) {
+    throw new ActionError(
+      'GitHub OIDC publish exchange did not return an apiKey.',
+    );
+  }
+  return {
+    apiKey,
+    accountId,
+  };
+};
+const normalizeSkillDirCandidate = (value) => {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed) {
+    return '';
+  }
+  const normalized = trimmed.replace(/\\/gu, '/').replace(/\/+$/u, '');
+  if (!normalized || normalized === '.') {
+    return '.';
+  }
+  return normalized.replace(/^\.\/+/u, '');
+};
+
+const isStagedPackageDirectory = (value) => {
+  const normalized = normalizeSkillDirCandidate(value);
+  if (!normalized) {
+    return false;
+  }
+  return /(^|\/)publish-package-[^/]+/u.test(normalized);
+};
+
+const parseVerificationSignal = (value) => {
+  if (value && typeof value === 'object' && !Array.isArray(value) && typeof value.ok === 'boolean') {
+    return value.ok;
+  }
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  return null;
+};
+
+const mergeVerificationSignals = (...values) => {
+  let sawFalse = false;
+  for (const value of values) {
+    const parsed = parseVerificationSignal(value);
+    if (parsed === true) {
+      return true;
+    }
+    if (parsed === false) {
+      sawFalse = true;
+    }
+  }
+  return sawFalse ? false : null;
+};
+
+const tryFetchStatusByRepo = async (params) => {
+  const skillDir = normalizeSkillDirCandidate(params.skillDir);
+  if (!params.repoUrl || !skillDir || path.isAbsolute(skillDir)) {
+    return null;
+  }
+  try {
+    return await executeWithRetry({
+      label: 'GET /skills/status/by-repo',
+      attempts: 1,
+      operation: () =>
+        fetchSkillStatusByRepo({
+          baseUrl: params.apiBaseUrl,
+          repoUrl: params.repoUrl,
+          skillDir,
+          ...(params.ref ? { ref: params.ref } : {}),
+        }),
+    });
+  } catch {
+    return null;
+  }
+};
+
+const getTrustTierPriority = (value) => {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'verified') {
+    return 4;
+  }
+  if (normalized === 'published') {
+    return 3;
+  }
+  if (normalized === 'validated') {
+    return 2;
+  }
+  if (normalized === 'unclaimed') {
+    return 1;
+  }
+  return 0;
+};
+
+const scoreStatusByRepo = (status) => {
+  if (!status || typeof status !== 'object' || Array.isArray(status)) {
+    return 0;
+  }
+  const trustTierPriority = getTrustTierPriority(status.trustTier);
+  const verificationSignals =
+    status.verificationSignals &&
+    typeof status.verificationSignals === 'object' &&
+    !Array.isArray(status.verificationSignals)
+      ? status.verificationSignals
+      : {};
+  const provenanceSignals =
+    status.provenanceSignals &&
+    typeof status.provenanceSignals === 'object' &&
+    !Array.isArray(status.provenanceSignals)
+      ? status.provenanceSignals
+      : {};
+  const domainProof = mergeVerificationSignals(
+    verificationSignals.domainProof,
+    status.domainProof,
+    status.verifiedDomain,
+  );
+  const manifestIntegrity = mergeVerificationSignals(
+    provenanceSignals.manifestIntegrity,
+    status.checks?.manifestIntegrity,
+  );
+  const repoCommitIntegrity = mergeVerificationSignals(
+    provenanceSignals.repoCommitIntegrity,
+    status.checks?.repoCommitIntegrity,
+  );
+  return (
+    trustTierPriority * 1000 +
+    (domainProof === true ? 200 : 0) +
+    (manifestIntegrity === true ? 40 : 0) +
+    (repoCommitIntegrity === true ? 20 : 0)
+  );
+};
+
+const resolveStatusByRepo = async (params) => {
+  const candidates = [];
+  const addCandidate = (value) => {
+    const normalized = normalizeSkillDirCandidate(value);
+    if (!normalized || candidates.includes(normalized)) {
+      return;
+    }
+    candidates.push(normalized);
+  };
+
+  const repoSkillDir = normalizeSkillDirCandidate(params.repoSkillDir);
+  const shouldUseRepositoryFallbacks = Boolean(repoSkillDir) || isStagedPackageDirectory(params.skillDir);
+
+  addCandidate(params.skillDir);
+  addCandidate(repoSkillDir);
+  if (shouldUseRepositoryFallbacks) {
+    addCandidate(params.skillName);
+    addCandidate('.');
+  }
+
+  const resolvedStatuses = await Promise.all(
+    candidates.map((candidate) =>
+      tryFetchStatusByRepo({
+        apiBaseUrl: params.apiBaseUrl,
+        repoUrl: params.repoUrl,
+        skillDir: candidate,
+        ...(params.ref ? { ref: params.ref } : {}),
+      }),
+    ),
+  );
+
+  let preferred = null;
+  for (const status of resolvedStatuses) {
+    if (!status || typeof status !== 'object' || Array.isArray(status)) {
+      continue;
+    }
+    if (!preferred || scoreStatusByRepo(status) > scoreStatusByRepo(preferred)) {
+      preferred = status;
+    }
+  }
+  return preferred;
+};
+
+const tryFetchPublishedSkill = async (params) => {
+  if (!params.skillName || !params.skillVersion) {
+    return null;
+  }
+  try {
+    return await findExistingSkillVersion({
+      apiBaseUrl: params.apiBaseUrl,
+      apiKey: '',
+      accountId: '',
+      name: params.skillName,
+      version: params.skillVersion,
+    });
+  } catch {
+    return null;
+  }
+};
+
+const tryListRepoCandidates = async (params) => {
+  if (!params.repoUrl) {
+    return [];
+  }
+  try {
+    const response = await executeWithRetry({
+      label: 'GET /skills',
+      attempts: 1,
+      operation: () =>
+        listSkillReleases({
+          baseUrl: params.apiBaseUrl,
+          query: {
+            limit: 50,
+          },
+        }),
+    });
+    const items = Array.isArray(response?.items) ? response.items : [];
+    const repos = items
+      .map((item) =>
+        item && typeof item === 'object' && !Array.isArray(item) && typeof item.repo === 'string'
+          ? item.repo.trim()
+          : '',
+      )
+      .filter(Boolean);
+    return [...new Set([params.repoUrl, ...repos])];
+  } catch {
+    return params.repoUrl ? [params.repoUrl] : [];
+  }
+};
+
+const tryFetchQuotePreview = async (params) => {
+  if (!params.shouldRequestQuotePreview) {
+    return null;
+  }
+  if (!Number.isFinite(params.fileCount) || params.fileCount <= 0) {
+    return null;
+  }
+  if (!Number.isFinite(params.totalBytes) || params.totalBytes <= 0) {
+    return null;
+  }
+
+  try {
+    return await executeWithRetry({
+      label: 'POST /skills/quote-preview',
+      attempts: 1,
+      operation: () =>
+        fetchSkillQuotePreview({
+          baseUrl: params.apiBaseUrl,
+          fileCount: params.fileCount,
+          totalBytes: params.totalBytes,
+          ...(params.skillName ? { skillName: params.skillName } : {}),
+          ...(params.skillVersion ? { skillVersion: params.skillVersion } : {}),
+          ...(params.repoUrl ? { repoUrl: params.repoUrl } : {}),
+          ...(params.skillDir ? { skillDir: params.skillDir } : {}),
+        }),
+    });
+  } catch {
+    return null;
+  }
+};
+
+const formatEstimatedCreditsRange = (estimate) => {
+  const min = Number(estimate?.estimatedCredits?.min);
+  const max = Number(estimate?.estimatedCredits?.max);
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+    return '';
+  }
+  return min === max ? `${min}` : `${min}-${max}`;
+};
+
+const buildMissingRequirements = (params) => {
+  const missing = [];
+  if (!params.repoUrl) {
+    missing.push('repo_url');
+  }
+  if (!params.commitSha) {
+    missing.push('commit_sha');
+  }
+  if (!params.isStableVersion) {
+    missing.push('stable_version');
+  }
+  return missing;
+};
+
+const resolvePublishReadiness = (missingRequirements) =>
+  missingRequirements.length === 0 ? 'ready' : 'blocked';
+
+const setLifecycleOutputs = async (params) => {
+  await setActionOutput('preview-json', params.previewJson ?? '');
+  await setActionOutput('hcs28-json', params.hcs28Json ?? '');
+  await setActionOutput('hcs28-score-total', params.hcs28ScoreTotal ?? '');
+  await setActionOutput('preview-json-path', params.previewJsonPath ?? '');
+  await setActionOutput('status-url', params.statusUrl ?? '');
+  await setActionOutput('trust-tier', params.trustTier ?? '');
+  await setActionOutput('publish-readiness', params.publishReadiness ?? '');
+  await setActionOutput(
+    'missing-requirements',
+    JSON.stringify(params.missingRequirements ?? []),
+  );
+  await setActionOutput('estimated-credits-range', params.estimatedCreditsRange ?? '');
+  await setActionOutput('managed-comment-url', params.managedCommentUrl ?? '');
+  await setActionOutput('managed-comment-status', params.managedCommentStatus ?? '');
+  await setActionOutput('managed-comment-reason', params.managedCommentReason ?? '');
+  await setActionOutput('publish-comment-url', params.publishCommentUrl ?? '');
+  await setActionOutput('publish-comment-status', params.publishCommentStatus ?? '');
+  await setActionOutput('release-annotation-status', params.releaseAnnotationStatus ?? '');
+  await setActionOutput('purchase-url', params.purchaseUrl ?? '');
+  await setActionOutput('publish-url', params.publishUrl ?? '');
+  await setActionOutput('verification-url', params.verificationUrl ?? '');
 };
 
 const setDistributionOutputs = async (distribution) => {
@@ -381,32 +831,6 @@ const maybeSubmitIndexNow = async (distribution, enabled) => {
   return submitToIndexNow(distribution.indexing.urls);
 };
 
-const githubApiRequest = async (params) => {
-  const { method, endpoint, token, body, accept } = params;
-  const apiBaseUrl = getEnv('GITHUB_API_URL', 'https://api.github.com');
-  const url = `${apiBaseUrl}${endpoint}`;
-  const response = await fetch(url, {
-    method,
-    headers: {
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/json',
-      accept: accept ?? 'application/vnd.github+json',
-      'x-github-api-version': '2022-11-28',
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
-  if (!response.ok) {
-    const details = await summarizeErrorBody(response);
-    throw new ActionError(
-      `GitHub API ${method} ${endpoint} failed with ${response.status}${details ? `: ${details}` : ''}`,
-    );
-  }
-  if (response.status === 204) {
-    return null;
-  }
-  return response.json();
-};
-
 const buildPublishMarkdown = (result) => {
   const lines = [];
   lines.push('### HCS-26 skill publish result');
@@ -453,80 +877,282 @@ const buildDistribution = (apiBaseUrl, name, version, skillJson = {}) =>
     skillJson,
   });
 
-const annotateResult = async (params) => {
-  const {
-    shouldAnnotate,
-    token,
-    markdown,
-    jobId,
-    eventPayload,
-  } = params;
-  if (!shouldAnnotate || !token) {
+const resolveCommentModeState = (params) => {
+  if (!params.token) {
+    return createAnnotationResult({ status: 'skipped', reason: 'missing-github-token' });
+  }
+  if (params.eventName !== 'pull_request' || !params.pullNumber) {
+    return createAnnotationResult({ status: 'skipped', reason: 'non-pr-event' });
+  }
+  if (params.commentMode === 'off') {
+    return createAnnotationResult({ status: 'disabled', reason: 'comment-mode-off' });
+  }
+  if (
+    !shouldPublishManagedComment({
+      commentMode: params.commentMode,
+      commentOnSuccess: params.commentOnSuccess,
+      publishReadiness: params.publishReadiness,
+    })
+  ) {
+    return createAnnotationResult({
+      status: 'skipped',
+      reason: 'comment-mode-gated',
+    });
+  }
+  return null;
+};
+
+const syncManagedComment = async (params) => {
+  const commentState = resolveCommentModeState(params);
+  if (commentState) {
+    return commentState;
+  }
+  const comments = await listIssueComments({
+    githubApiRequest: params.githubApiRequest,
+    owner: params.owner,
+    repo: params.repo,
+    pullNumber: params.pullNumber,
+    token: params.token,
+  });
+  const existingComment = findExistingCommentByMarker(comments, params.marker);
+  const previousMetadata = existingComment
+    ? extractManagedCommentMetadata(existingComment.body) || decodeCommentMetadata(existingComment.body)
+    : null;
+  if (
+    params.commentMode === 'state-changes' &&
+    existingComment &&
+    extractManagedCommentState(existingComment.body) === params.stateSignature
+  ) {
+    return createAnnotationResult({
+      status: 'unchanged',
+      reason: 'state-unchanged',
+      url: String(existingComment.html_url ?? ''),
+      id: Number(existingComment.id ?? 0) || null,
+      previousBody: String(existingComment.body ?? ''),
+      updatedBody: String(existingComment.body ?? ''),
+    });
+  }
+  const body = buildManagedCommentBody({
+    ...params,
+    previousMetadata,
+    currentMetadata: params.currentMetadata,
+  });
+  return upsertIssueComment({
+    githubApiRequest: params.githubApiRequest,
+    owner: params.owner,
+    repo: params.repo,
+    pullNumber: params.pullNumber,
+    token: params.token,
+    body,
+    existingComment,
+    skipIfUnchanged: params.commentMode === 'state-changes',
+  });
+};
+
+const buildPublishCommentMetadata = (params) => ({
+  surface: 'publish',
+  mode: 'publish',
+  groupKey: normalizeText(params.groupKey),
+  skillName: normalizeText(params.skillName),
+  skillVersion: normalizeText(params.skillVersion),
+  trustTier: normalizeText(params.trustTier || 'published'),
+  publishReadiness: normalizeText(params.publishReadiness || 'published'),
+  missingRequirements: [],
+  estimatedCreditsRange: '',
+  statusUrl: normalizeText(params.statusUrl),
+  hcs28Total: null,
+  signalScores: {},
+  packageSummary: {
+    includedFileCount: null,
+    excludedFileCount: Array.isArray(params.excludedFiles) ? params.excludedFiles.length : null,
+    totalBytes: null,
+  },
+  published: params.published === true,
+  skipReason: normalizeText(params.skipReason),
+  workflowRunUrl: normalizeText(params.workflowRunUrl),
+  quoteId: normalizeText(params.quoteId),
+  jobId: normalizeText(params.jobId),
+  skillPageUrl: normalizeText(params.skillPageUrl),
+  renderedAt: new Date().toISOString(),
+});
+
+const isAnnotationWritten = (result) =>
+  result?.status === 'created' || result?.status === 'updated' || result?.status === 'unchanged';
+
+const syncPublishAnnotations = async (params) => {
+  if (!params.shouldAnnotate) {
+    return {
+      annotationTarget: 'none',
+      publishComment: createAnnotationResult({ status: 'disabled', reason: 'annotate-disabled' }),
+      releaseBlock: createAnnotationResult({ status: 'disabled', reason: 'annotate-disabled' }),
+    };
+  }
+  if (!params.token) {
+    return {
+      annotationTarget: 'none',
+      publishComment: createAnnotationResult({ status: 'skipped', reason: 'missing-github-token' }),
+      releaseBlock: createAnnotationResult({ status: 'skipped', reason: 'missing-github-token' }),
+    };
+  }
+
+  const releaseResult = (() =>
+    createAnnotationResult({ status: 'skipped', reason: 'not-release-event' }))();
+  const publishResult = (() =>
+    createAnnotationResult({ status: 'skipped', reason: 'associated-pr-not-found' }))();
+  const eventName = normalizeText(params.eventName);
+  let associatedPullNumber = null;
+
+  if (eventName === 'release' && Number.isFinite(params.releaseId) && params.releaseId > 0) {
+    const releaseIdentity = `${params.skillName}@${params.skillVersion}`;
+    const releaseMarker = buildReleaseBlockMarker(releaseIdentity);
+    const releaseContent = renderReleaseBlock({
+      skillName: params.skillName,
+      skillVersion: params.skillVersion,
+      skillPageUrl: params.distribution?.urls?.skillPageUrl,
+      pinnedSkillMdUrl: params.distribution?.urls?.pinnedSkillMdUrl,
+      badgeMarkdown: params.distribution?.snippets?.badgeMarkdown,
+      skillJsonHrl: params.skillJsonHrl,
+      directoryTopicId: params.directoryTopicId,
+      packageTopicId: params.packageTopicId,
+    });
+    try {
+      const releaseUpsert = await upsertReleaseBodyBlock({
+        githubApiRequest: params.githubApiRequest,
+        owner: params.owner,
+        repo: params.repo,
+        releaseId: params.releaseId,
+        token: params.token,
+        marker: releaseMarker,
+        content: releaseContent,
+      });
+      Object.assign(releaseResult, releaseUpsert);
+    } catch (error) {
+      Object.assign(
+        releaseResult,
+        createAnnotationResult({
+          status: 'failed',
+          reason: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    }
+  }
+
+  try {
+    const associatedPr = await resolveAssociatedPullRequest({
+      githubApiRequest: params.githubApiRequest,
+      owner: params.owner,
+      repo: params.repo,
+      token: params.token,
+      eventName,
+      eventPayload: params.eventPayload,
+      commitSha: params.commitSha,
+    });
+    if (associatedPr?.number) {
+      associatedPullNumber = Number(associatedPr.number);
+      const groupKey = params.groupKey || `${params.skillName}-${params.skillVersion}`;
+      const marker = buildPublishCommentMarker(groupKey);
+      const comments = await listIssueComments({
+        githubApiRequest: params.githubApiRequest,
+        owner: params.owner,
+        repo: params.repo,
+        pullNumber: associatedPr.number,
+        token: params.token,
+      });
+      const existingComment = findExistingCommentByMarker(comments, marker);
+      const previousMetadata = existingComment
+        ? decodeCommentMetadata(existingComment.body)
+        : null;
+      const currentMetadata = buildPublishCommentMetadata({
+        groupKey,
+        skillName: params.skillName,
+        skillVersion: params.skillVersion,
+        published: params.published,
+        skipReason: params.skipReason,
+        statusUrl: params.distribution?.urls?.skillPageUrl,
+        excludedFiles: params.excludedFiles,
+        workflowRunUrl: params.workflowRunUrl,
+        quoteId: params.quoteId,
+        jobId: params.jobId,
+        skillPageUrl: params.distribution?.urls?.skillPageUrl,
+      });
+      const encodedMetadata = encodeCommentMetadata(currentMetadata);
+      const stateSignature = buildStateSignature(currentMetadata);
+      const body = renderPublishComment({
+        marker,
+        encodedMetadata,
+        stateSignature,
+        previousMetadata,
+        currentMetadata,
+        skillName: params.skillName,
+        skillVersion: params.skillVersion,
+        trustTier: 'published',
+        published: params.published,
+        skipReason: params.skipReason,
+        credits: params.credits,
+        estimatedCostHbar: params.estimatedCostHbar,
+        quoteId: params.quoteId,
+        jobId: params.jobId,
+        skillJsonHrl: params.skillJsonHrl,
+        directoryTopicId: params.directoryTopicId,
+        packageTopicId: params.packageTopicId,
+        repoUrl: params.repoUrl,
+        commitSha: params.commitSha,
+        workflowRunUrl: params.workflowRunUrl,
+        distribution: params.distribution,
+        skillPageUrl: params.distribution?.urls?.skillPageUrl,
+        pinnedSkillMdUrl: params.distribution?.urls?.pinnedSkillMdUrl,
+        latestSkillMdUrl: params.distribution?.urls?.latestSkillMdUrl,
+        pinnedManifestUrl: params.distribution?.urls?.pinnedManifestUrl,
+        installMetadataPinnedUrl: params.distribution?.urls?.installMetadataPinnedUrl,
+      });
+      const publishUpsert = await upsertIssueComment({
+        githubApiRequest: params.githubApiRequest,
+        owner: params.owner,
+        repo: params.repo,
+        pullNumber: associatedPr.number,
+        token: params.token,
+        body,
+        existingComment,
+        skipIfUnchanged: true,
+      });
+      Object.assign(publishResult, publishUpsert);
+    }
+  } catch (error) {
+    Object.assign(
+      publishResult,
+      createAnnotationResult({
+        status: 'failed',
+        reason: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  }
+
+  const annotationTarget = (() => {
+    if (isAnnotationWritten(releaseResult) && Number.isFinite(params.releaseId) && params.releaseId > 0) {
+      return `release:${params.releaseId}`;
+    }
+    if (isAnnotationWritten(publishResult) && Number.isFinite(associatedPullNumber) && associatedPullNumber > 0) {
+      return `pr:${associatedPullNumber}`;
+    }
+    if (releaseResult.status === 'failed' || publishResult.status === 'failed') {
+      return 'failed';
+    }
     return 'none';
-  }
+  })();
 
-  const repository = getEnv('GITHUB_REPOSITORY');
-  if (!repository || !repository.includes('/')) {
-    return 'none';
-  }
-  const [owner, repo] = repository.split('/');
-  const eventName = getEnv('GITHUB_EVENT_NAME');
-  const marker = `<!-- skills-publish:${jobId} -->`;
-  const content = `${marker}\n${markdown}`;
-
-  if (eventName === 'release' && eventPayload?.release?.id) {
-    const releaseId = Number(eventPayload.release.id);
-    const existingBody = typeof eventPayload.release.body === 'string' ? eventPayload.release.body : '';
-    if (existingBody.includes(marker)) {
-      return `release:${releaseId}`;
-    }
-    const mergedBody = existingBody.trim().length > 0
-      ? `${existingBody}\n\n${content}`
-      : content;
-    await githubApiRequest({
-      method: 'PATCH',
-      endpoint: `/repos/${owner}/${repo}/releases/${releaseId}`,
-      token,
-      body: { body: mergedBody },
-    });
-    return `release:${releaseId}`;
-  }
-
-  if (eventName === 'push') {
-    const sha = getEnv('GITHUB_SHA');
-    if (!sha) {
-      return 'none';
-    }
-    const pulls = await githubApiRequest({
-      method: 'GET',
-      endpoint: `/repos/${owner}/${repo}/commits/${sha}/pulls`,
-      token,
-      accept: 'application/vnd.github+json',
-    });
-    if (!Array.isArray(pulls) || pulls.length === 0) {
-      return 'none';
-    }
-    const pull = pulls[0];
-    const pullNumber = typeof pull?.number === 'number' ? pull.number : null;
-    if (!pullNumber) {
-      return 'none';
-    }
-    await githubApiRequest({
-      method: 'POST',
-      endpoint: `/repos/${owner}/${repo}/issues/${pullNumber}/comments`,
-      token,
-      body: { body: content },
-    });
-    return `pr:${pullNumber}`;
-  }
-
-  return 'none';
+  return {
+    annotationTarget,
+    publishComment: publishResult,
+    releaseBlock: releaseResult,
+    associatedPullNumber,
+  };
 };
 
 const run = async () => {
   const apiBaseUrl = normalizeApiBaseUrl(getEnv('INPUT_API_BASE_URL'));
-  const apiKey = getEnv('INPUT_API_KEY');
-  const accountId = getEnv('INPUT_ACCOUNT_ID');
+  let apiKey = getEnv('INPUT_API_KEY');
+  let accountId = getEnv('INPUT_ACCOUNT_ID');
+  const publishAuthMode = String(getEnv('INPUT_PUBLISH_AUTH', 'api-key')).trim().toLowerCase();
   const skillDirInput = getEnv('INPUT_SKILL_DIR');
   const overrideName = getEnv('INPUT_NAME');
   const overrideVersion = getEnv('INPUT_VERSION');
@@ -539,20 +1165,47 @@ const run = async () => {
   const pollIntervalMs = parseNumber(getEnv('INPUT_POLL_INTERVAL_MS'), 4000);
   const shouldAnnotate = toBoolean(getEnv('INPUT_ANNOTATE'), true);
   const shouldSubmitIndexNow = toBoolean(getEnv('INPUT_SUBMIT_INDEXNOW'), false);
+  const shouldRequestQuotePreview = toBoolean(getEnv('INPUT_QUOTE_PREVIEW'), false);
+  const shouldUploadPreview = toBoolean(getEnv('INPUT_PREVIEW_UPLOAD'), false);
+  const repoSkillDirInput = getEnv('INPUT_REPO_SKILL_DIR');
+  const commentMode = String(getEnv('INPUT_COMMENT_MODE', 'state-changes')).trim().toLowerCase();
+  const commentOnSuccess = toBoolean(getEnv('INPUT_COMMENT_ON_SUCCESS'), true);
+  const conversionHintLevel = String(getEnv('INPUT_CONVERSION_HINT_LEVEL', 'soft')).trim().toLowerCase();
+  const explicitGroupKey = String(getEnv('INPUT_GROUP_KEY')).trim();
   const githubToken = getEnv('INPUT_GITHUB_TOKEN');
   const mode = String(getEnv('INPUT_MODE', 'publish')).trim().toLowerCase() || 'publish';
   const jsonOutput = toBoolean(getEnv('INPUT_JSON'), false);
+  const githubApiRequest = createGitHubApiRequest(
+    getEnv('GITHUB_API_URL', 'https://api.github.com'),
+  );
+  const eventName = getEnv('GITHUB_EVENT_NAME');
   const log = (message) => {
     if (!jsonOutput) {
       stdout(message);
     }
   };
 
-  if (!['publish', 'validate', 'quote'].includes(mode)) {
+  if (!['publish', 'validate', 'monitor', 'quote'].includes(mode)) {
     throw new ActionError(`Unsupported mode: ${mode}`);
   }
+  if (!['api-key', 'github-oidc'].includes(publishAuthMode)) {
+    throw new ActionError(`Unsupported publish-auth input: ${publishAuthMode}`);
+  }
   if ((mode === 'publish' || mode === 'quote') && !apiKey) {
-    throw new ActionError('Missing api-key input. Configure RB_API_KEY in repository secrets.');
+    if (publishAuthMode === 'github-oidc') {
+      if (!canUsePreviewOidc(eventName)) {
+        throw new ActionError(
+          `publish-auth=github-oidc is only allowed from trusted repo-owned workflows. Current event: ${eventName || 'unknown'}.`,
+        );
+      }
+      const exchanged = await exchangePublishCredentialsFromGithubOidc({
+        apiBaseUrl,
+      });
+      apiKey = exchanged.apiKey;
+      accountId = accountId || exchanged.accountId;
+    } else {
+      throw new ActionError('Missing api-key input. Configure RB_API_KEY in repository secrets.');
+    }
   }
   if (!skillDirInput) {
     throw new ActionError('Missing skill-dir input.');
@@ -566,24 +1219,21 @@ const run = async () => {
 
   const { includedFiles: discoveredFiles, excludedFiles } = await discoverSkillPackageFiles(skillDir);
   const relativePaths = discoveredFiles.map(item => item.relativePath);
-  if (!relativePaths.includes('skill.json')) {
-    throw new ActionError(`Missing required file: ${path.posix.join(skillDirInput, 'skill.json')}`);
-  }
   if (!relativePaths.includes('SKILL.md')) {
     throw new ActionError(`Missing required file: ${path.posix.join(skillDirInput, 'SKILL.md')}`);
   }
 
-  const skillJsonAbsolutePath = path.join(skillDir, 'skill.json');
-  const rawSkillJson = await readFile(skillJsonAbsolutePath, 'utf8');
-  let parsedSkillJson;
-  try {
-    parsedSkillJson = JSON.parse(rawSkillJson);
-  } catch (error) {
-    throw new ActionError(`skill.json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  const skillPackageState = await readSkillPackageState(skillDir);
+  if (skillPackageState.invalidSkillJson) {
+    throw new ActionError(
+      `skill.json is not valid JSON: ${skillPackageState.skillJsonError}`,
+    );
   }
-  if (typeof parsedSkillJson !== 'object' || parsedSkillJson === null || Array.isArray(parsedSkillJson)) {
-    throw new ActionError('skill.json must be a JSON object.');
-  }
+  let parsedSkillJson = resolveSkillPackageMetadata({
+    skillDir,
+    skillMdText: skillPackageState.skillMdText,
+    parsedSkillJson: skillPackageState.parsedSkillJson,
+  });
 
   if (overrideName) {
     parsedSkillJson.name = overrideName;
@@ -595,6 +1245,7 @@ const run = async () => {
   const repository = getEnv('GITHUB_REPOSITORY');
   const serverUrl = getEnv('GITHUB_SERVER_URL', 'https://github.com');
   const commitSha = getEnv('GITHUB_SHA');
+  const githubRef = getEnv('GITHUB_REF');
   const repoUrl = repository ? `${serverUrl}/${repository}` : '';
 
   if (stampRepoCommit) {
@@ -652,6 +1303,7 @@ const run = async () => {
     const existingVersion = await findExistingSkillVersion({
       apiBaseUrl,
       apiKey,
+      accountId,
       name: skillName,
       version: skillVersion,
     });
@@ -697,6 +1349,11 @@ const run = async () => {
       await setActionOutput('skip-reason', result.skippedReason);
       await setActionOutput('skill-name', result.skillName);
       await setActionOutput('skill-version', result.skillVersion);
+      await setActionOutput('preview-json', '');
+      await setActionOutput('hcs28-json', '');
+      await setActionOutput('hcs28-score-total', '');
+      await setActionOutput('preview-json-path', '');
+      await setActionOutput('status-url', result.distribution.urls.skillPageUrl);
       await setActionOutput('quote-id', '');
       await setActionOutput('job-id', '');
       await setActionOutput('directory-topic-id', result.directoryTopicId ?? '');
@@ -705,6 +1362,24 @@ const run = async () => {
       await setActionOutput('credits', '0');
       await setActionOutput('estimated-cost-hbar', '0');
       await setActionOutput('annotation-target', 'none');
+      await setLifecycleOutputs({
+        previewJson: '',
+        previewJsonPath: '',
+        statusUrl: result.distribution.urls.skillPageUrl,
+        trustTier: 'published',
+        publishReadiness: 'published',
+        missingRequirements: [],
+        estimatedCreditsRange: '',
+        managedCommentUrl: '',
+        managedCommentStatus: 'disabled',
+        managedCommentReason: 'publish-mode',
+        publishCommentUrl: '',
+        publishCommentStatus: 'disabled',
+        releaseAnnotationStatus: 'disabled',
+        purchaseUrl: '',
+        publishUrl: result.distribution.urls.skillPageUrl,
+        verificationUrl: result.distribution.urls.skillPageUrl,
+      });
       const indexNowResult = await maybeSubmitIndexNow(
         result.distribution,
         shouldSubmitIndexNow,
@@ -729,11 +1404,10 @@ const run = async () => {
   let maxTotalSizeBytes = 0;
   let allowedMimeTypes = null;
   if (mode === 'publish' || mode === 'quote') {
-    const config = await requestJsonWithRetry({
-      method: 'GET',
-      url: buildApiUrl(apiBaseUrl, '/skills/config'),
-      apiKey,
+    const config = await executeWithRetry({
+      label: 'GET /skills/config',
       attempts: 3,
+      operation: () => fetchSkillsConfig(apiBaseUrl, apiKey, accountId),
     });
     maxFiles = Number(config?.maxFiles ?? 0);
     maxTotalSizeBytes = Number(config?.maxTotalSizeBytes ?? 0);
@@ -748,6 +1422,7 @@ const run = async () => {
 
   let totalBytes = 0;
   const files = [];
+  const previewFiles = [];
   const rewrittenSkillJsonBuffer = Buffer.from(`${JSON.stringify(parsedSkillJson, null, 2)}\n`, 'utf8');
   for (const file of discoveredFiles) {
     const bodyBuffer =
@@ -765,6 +1440,29 @@ const run = async () => {
       mimeType,
       role: resolveRole(file.relativePath),
     });
+    previewFiles.push({
+      name: file.relativePath,
+      mimeType,
+      role: resolveRole(file.relativePath),
+      sizeBytes: bodyBuffer.byteLength,
+    });
+  }
+
+  if (!relativePaths.includes('skill.json')) {
+    const mimeType = guessMimeType('skill.json');
+    files.push({
+      name: 'skill.json',
+      base64: rewrittenSkillJsonBuffer.toString('base64'),
+      mimeType,
+      role: resolveRole('skill.json'),
+    });
+    previewFiles.push({
+      name: 'skill.json',
+      mimeType,
+      role: resolveRole('skill.json'),
+      sizeBytes: rewrittenSkillJsonBuffer.byteLength,
+    });
+    totalBytes += rewrittenSkillJsonBuffer.byteLength;
   }
 
   if (maxTotalSizeBytes > 0 && totalBytes > maxTotalSizeBytes) {
@@ -772,7 +1470,7 @@ const run = async () => {
   }
 
   const validationResult = {
-    mode: 'validate',
+    mode,
     skillName,
     skillVersion,
     skillDir: skillDirInput,
@@ -790,13 +1488,284 @@ const run = async () => {
     );
   }
 
-  if (mode === 'validate') {
+  if (mode === 'validate' || mode === 'monitor') {
     const distribution = buildDistribution(apiBaseUrl, skillName, skillVersion, parsedSkillJson);
+    const eventPayload = await parseEventPayload();
+    const generatedAt = new Date().toISOString();
+    const toolVersion = await getToolVersion();
+    const previewFiles = files.map((file) => ({
+      ...file,
+      sizeBytes: Buffer.byteLength(file.base64, 'base64'),
+    }));
+    const publishedSkill = await tryFetchPublishedSkill({
+      apiBaseUrl,
+      skillName,
+      skillVersion,
+    });
+    const previewReport = buildSkillPreviewReport({
+      toolVersion,
+      repository,
+      repoUrl,
+      commitSha,
+      ref: githubRef,
+      eventName,
+      workflowRunUrl: getWorkflowRunUrl(),
+      skillDir: skillDirInput,
+      skillName,
+      skillVersion,
+      generatedAt,
+      eventPayload,
+      files: previewFiles,
+      excludedFiles,
+      totalBytes,
+    });
+    if (shouldUploadPreview && !['validate', 'monitor'].includes(mode)) {
+      stderr('Ignoring preview-upload because GitHub OIDC preview uploads are only supported for validate and monitor.');
+    } else if (shouldUploadPreview && !canUsePreviewOidc(eventName)) {
+      stderr(
+        `Skipping preview-upload for ${eventName || 'unknown'} because GitHub OIDC preview uploads are limited to trusted repo-owned workflows.`,
+      );
+    }
+    const previewUploadResult =
+      shouldUploadPreview && ['validate', 'monitor'].includes(mode) && canUsePreviewOidc(eventName)
+        ? await uploadPreviewRecord({
+            apiBaseUrl,
+            report: previewReport,
+          }).catch((error) => {
+            stderr(`Preview upload failed: ${error instanceof Error ? error.message : String(error)}`);
+            return null;
+          })
+        : null;
+    const statusByRepo = await resolveStatusByRepo({
+      apiBaseUrl,
+      repoUrl,
+      skillDir: skillDirInput,
+      repoSkillDir: repoSkillDirInput,
+      skillName,
+      ref: githubRef,
+    });
+    const repoCandidates =
+      mode === 'monitor'
+        ? await tryListRepoCandidates({
+            apiBaseUrl,
+            repoUrl,
+          })
+        : repoUrl
+          ? [repoUrl]
+          : [];
+    const hcs28BaseParams = {
+      mode,
+      includeExternal: mode === 'monitor',
+      computedAt: generatedAt,
+      githubToken: githubToken || getEnv('GITHUB_TOKEN'),
+      packageState: {
+        skillName,
+        skillVersion,
+        skillDescription: parsedSkillJson?.description,
+        repoUrl,
+        commitSha,
+        homepage: parsedSkillJson?.homepage,
+        tags: Array.isArray(parsedSkillJson?.tags) ? parsedSkillJson.tags : [],
+        languages: Array.isArray(parsedSkillJson?.languages) ? parsedSkillJson.languages : [],
+        category: parsedSkillJson?.category,
+        files: previewReport.package_summary.included_files,
+      },
+      publishedSkill: {
+        ...(publishedSkill && typeof publishedSkill === 'object' ? publishedSkill : {}),
+        verificationSignals: {
+          ...(
+            publishedSkill?.verificationSignals &&
+            typeof publishedSkill.verificationSignals === 'object' &&
+            !Array.isArray(publishedSkill.verificationSignals)
+              ? publishedSkill.verificationSignals
+              : {}
+          ),
+          publisherBound: mergeVerificationSignals(
+            statusByRepo?.verificationSignals?.publisherBound,
+            publishedSkill?.verificationSignals?.publisherBound,
+          ),
+          repoCommitIntegrity: mergeVerificationSignals(
+            statusByRepo?.provenanceSignals?.repoCommitIntegrity,
+            publishedSkill?.verificationSignals?.repoCommitIntegrity,
+          ),
+          manifestIntegrity: mergeVerificationSignals(
+            statusByRepo?.provenanceSignals?.manifestIntegrity,
+            publishedSkill?.verificationSignals?.manifestIntegrity,
+          ),
+          domainProof: mergeVerificationSignals(
+            statusByRepo?.verificationSignals?.domainProof,
+            statusByRepo?.domainProof,
+            statusByRepo?.verifiedDomain,
+            publishedSkill?.verificationSignals?.domainProof,
+          ),
+        },
+        repo: publishedSkill?.repo ?? repoUrl,
+        commit: publishedSkill?.commit ?? commitSha,
+        homepage: publishedSkill?.homepage ?? parsedSkillJson?.homepage,
+      },
+      repoCandidates,
+    };
+    const hcs28 = await computeHcs28TrustPreview(hcs28BaseParams).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      stderr(`HCS-28 scoring failed: ${message}`);
+      return buildHcs28Fallback({
+        ...hcs28BaseParams,
+        errorMessage: message,
+      });
+    });
+    const previewReportWithHcs28 = buildSkillPreviewReport({
+      ...previewReport,
+      toolVersion,
+      repository,
+      repoUrl,
+      commitSha,
+      ref: githubRef,
+      eventName,
+      workflowRunUrl: getWorkflowRunUrl(),
+      skillDir: skillDirInput,
+      skillName,
+      skillVersion,
+      generatedAt,
+      eventPayload,
+      files: previewFiles,
+      excludedFiles,
+      totalBytes,
+      hcs28,
+    });
+    const previewJsonPath = await writeSkillPreviewReport({
+      workspaceDir: process.cwd(),
+      report: previewReportWithHcs28,
+    });
+    const previewJson = JSON.stringify(previewReportWithHcs28, null, 2);
+    const quotePreview = await tryFetchQuotePreview({
+      shouldRequestQuotePreview,
+      apiBaseUrl,
+      fileCount: files.length,
+      totalBytes,
+      skillName,
+      skillVersion,
+      repoUrl,
+      skillDir: skillDirInput,
+    });
+    const missingRequirements = buildMissingRequirements({
+      repoUrl,
+      commitSha,
+      isStableVersion: !nonstableVersion,
+    });
+    const brokerTrustTier = String(statusByRepo?.trustTier ?? '').trim().toLowerCase();
+    const trustTier =
+      brokerTrustTier && brokerTrustTier !== 'unclaimed'
+        ? brokerTrustTier
+        : publishedSkill
+          ? publishedSkill.verified === true
+            ? 'verified'
+            : 'published'
+          : 'validated';
+    const publishReadiness = resolvePublishReadiness(missingRequirements);
+    const fallbackStatusUrl = String(previewUploadResult?.statusUrl ?? statusByRepo?.statusUrl ?? '');
+    const statusUrl = String(
+      (publishedSkill ? distribution.urls.skillPageUrl : '') || fallbackStatusUrl,
+    );
+    const purchaseUrl = String(
+      quotePreview?.purchaseUrl ??
+        statusByRepo?.publisher?.submitUrl ??
+        '',
+    );
+    const publishUrl = String(
+      quotePreview?.publishUrl ??
+        statusByRepo?.publisher?.actionMarketplaceUrl ??
+        statusByRepo?.publisher?.submitUrl ??
+        '',
+    );
+    const verificationUrl = String(
+      quotePreview?.verificationUrl ??
+        statusByRepo?.publisher?.submitUrl ??
+        '',
+    );
+    const estimatedCreditsRange = formatEstimatedCreditsRange(quotePreview);
+    const [owner = '', repo = ''] = repository.split('/', 2);
+    const pullNumber = Number(eventPayload?.pull_request?.number ?? 0) || null;
+    const groupKey =
+      explicitGroupKey ||
+      buildDefaultManagedCommentGroupKey({
+        repository,
+        pullNumber,
+        skillName,
+        skillDir: skillDirInput,
+      });
+    const packageSummary = {
+      includedFileCount: Number(previewReportWithHcs28?.package_summary?.included_file_count ?? files.length),
+      excludedFileCount: Number(previewReportWithHcs28?.package_summary?.excluded_file_count ?? excludedFiles.length),
+      totalBytes: Number(previewReportWithHcs28?.package_summary?.total_bytes ?? totalBytes),
+    };
+    const previewCommentMetadata = buildPreviewCommentMetadata({
+      mode,
+      groupKey,
+      skillDir: skillDirInput,
+      skillName,
+      skillVersion,
+      trustTier,
+      publishReadiness,
+      missingRequirements,
+      estimatedCreditsRange,
+      packageSummary,
+      statusUrl,
+      purchaseUrl,
+      publishUrl,
+      verificationUrl,
+      workflowRunUrl: getWorkflowRunUrl(),
+      conversionHintLevel,
+      nextActions: previewReportWithHcs28.suggested_next_steps,
+      hcs28,
+    });
+    const stateSignature = buildManagedCommentStateSignature({
+      ...previewCommentMetadata,
+      hcs28,
+    });
+    const marker = buildManagedCommentMarker(groupKey);
+    const managedCommentResult = await syncManagedComment({
+      githubApiRequest,
+      token: githubToken,
+      eventName: getEnv('GITHUB_EVENT_NAME'),
+      owner,
+      repo,
+      pullNumber,
+      commentMode,
+      commentOnSuccess,
+      publishReadiness,
+      marker,
+      stateSignature,
+      mode,
+      currentMetadata: previewCommentMetadata,
+      skillName,
+      skillVersion,
+      hcs28,
+      workflowRunUrl: getWorkflowRunUrl(),
+      conversionHintLevel,
+      packageSummary,
+    }).catch((error) => {
+      stderr(`Managed comment update failed: ${error instanceof Error ? error.message : String(error)}`);
+      return createAnnotationResult({
+        status: 'failed',
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    });
     validationResult.distribution = distribution;
+    validationResult.previewReport = previewReportWithHcs28;
+    validationResult.hcs28 = hcs28;
+    validationResult.trustTier = trustTier;
+    validationResult.publishReadiness = publishReadiness;
+    validationResult.missingRequirements = missingRequirements;
+    validationResult.statusUrl = statusUrl;
     await setActionOutput('published', 'false');
     await setActionOutput('skip-reason', 'validation-only');
     await setActionOutput('skill-name', skillName);
     await setActionOutput('skill-version', skillVersion);
+    await setActionOutput('preview-json', previewJson);
+    await setActionOutput('hcs28-json', JSON.stringify(hcs28, null, 2));
+    await setActionOutput('hcs28-score-total', String(hcs28.trustScores.total));
+    await setActionOutput('preview-json-path', previewJsonPath);
+    await setActionOutput('status-url', statusUrl);
     await setActionOutput('quote-id', '');
     await setActionOutput('job-id', '');
     await setActionOutput('directory-topic-id', '');
@@ -807,24 +1776,68 @@ const run = async () => {
     await setActionOutput('annotation-target', 'none');
     await setActionOutput('indexnow-result', '');
     await setDistributionOutputs(distribution);
+    await setLifecycleOutputs({
+      previewJson,
+      hcs28Json: JSON.stringify(hcs28, null, 2),
+      hcs28ScoreTotal: String(hcs28.trustScores.total),
+      previewJsonPath,
+      statusUrl,
+      trustTier,
+      publishReadiness,
+      missingRequirements,
+      estimatedCreditsRange,
+      managedCommentUrl: managedCommentResult.url,
+      managedCommentStatus: managedCommentResult.status,
+      managedCommentReason: managedCommentResult.reason,
+      publishCommentUrl: '',
+      publishCommentStatus: 'disabled',
+      releaseAnnotationStatus: 'disabled',
+      purchaseUrl,
+      publishUrl,
+      verificationUrl,
+    });
     await setActionOutput('result-json', JSON.stringify(validationResult, null, 2));
+    await appendStepSummary(
+      [
+        `### ${mode === 'monitor' ? 'Monitor' : 'Validate'} result`,
+        '',
+        `- Skill: \`${skillName}@${skillVersion}\``,
+        `- Trust tier: \`${trustTier}\``,
+        `- HCS-28 total: \`${hcs28.trustScores.total}\``,
+        `- Publish readiness: \`${publishReadiness}\``,
+        `- Missing requirements: \`${missingRequirements.length}\``,
+        statusUrl ? `- Status page: ${statusUrl}` : '- Status page: not available yet',
+        '',
+        formatPreviewNextActions(previewReportWithHcs28),
+      ].join('\n'),
+    );
     if (jsonOutput) {
-      printJson(validationResult);
+      printJson({
+        ...validationResult,
+        preview: {
+          report: previewReportWithHcs28,
+          path: previewJsonPath,
+          statusUrl,
+        },
+      });
     } else {
-      stdout(`Validation complete for ${skillName}@${skillVersion}.`);
+      stdout(
+        `${mode === 'monitor' ? 'Monitor' : 'Validation'} complete for ${skillName}@${skillVersion}.`,
+      );
     }
     return;
   }
 
-  const quote = await requestJsonWithRetry({
-    method: 'POST',
-    url: buildApiUrl(apiBaseUrl, '/skills/quote'),
-    apiKey,
-    body: {
-      files,
-      ...(accountId ? { accountId } : {}),
-    },
+  const quote = await executeWithRetry({
+    label: 'POST /skills/quote',
     attempts: 3,
+    operation: () =>
+      quoteSkillPublishRequest({
+        baseUrl: apiBaseUrl,
+        apiKey,
+        accountId,
+        files,
+      }),
   });
 
   const quoteId = String(quote?.quoteId ?? '').trim();
@@ -848,11 +1861,81 @@ const run = async () => {
 
   if (mode === 'quote') {
     const distribution = buildDistribution(apiBaseUrl, skillName, skillVersion, parsedSkillJson);
+    const eventPayload = await parseEventPayload();
+    const [owner = '', repo = ''] = repository.split('/', 2);
+    const pullNumber = Number(eventPayload?.pull_request?.number ?? 0) || null;
+    const groupKey =
+      explicitGroupKey ||
+      buildDefaultManagedCommentGroupKey({
+        repository,
+        pullNumber,
+        skillName,
+        skillDir: skillDirInput,
+      });
+    const quoteCommentMetadata = buildPreviewCommentMetadata({
+      mode: 'quote',
+      groupKey,
+      skillDir: skillDirInput,
+      skillName,
+      skillVersion,
+      trustTier: '',
+      publishReadiness: 'quoted',
+      missingRequirements: [],
+      estimatedCreditsRange: `${quoteResult.credits} credits`,
+      packageSummary: {
+        includedFileCount: files.length,
+        excludedFileCount: excludedFiles.length,
+        totalBytes,
+      },
+      statusUrl: distribution.urls.skillPageUrl,
+      purchaseUrl: distribution.urls.skillPageUrl,
+      publishUrl: distribution.urls.skillPageUrl,
+      verificationUrl: distribution.urls.skillPageUrl,
+      workflowRunUrl: getWorkflowRunUrl(),
+      conversionHintLevel,
+      nextActions: [],
+      hcs28: {},
+    });
+    const quoteStateSignature = buildManagedCommentStateSignature({
+      ...quoteCommentMetadata,
+      hcs28: {},
+    });
+    const quoteMarker = buildManagedCommentMarker(groupKey);
+    const quoteCommentResult = await syncManagedComment({
+      githubApiRequest,
+      token: githubToken,
+      eventName: getEnv('GITHUB_EVENT_NAME'),
+      owner,
+      repo,
+      pullNumber,
+      commentMode,
+      commentOnSuccess,
+      publishReadiness: 'quoted',
+      marker: quoteMarker,
+      stateSignature: quoteStateSignature,
+      mode: 'quote',
+      currentMetadata: quoteCommentMetadata,
+      skillName,
+      skillVersion,
+      hcs28: {},
+      workflowRunUrl: getWorkflowRunUrl(),
+      conversionHintLevel,
+      packageSummary: quoteCommentMetadata.packageSummary,
+    }).catch((error) =>
+      createAnnotationResult({
+        status: 'failed',
+        reason: error instanceof Error ? error.message : String(error),
+      }));
     quoteResult.distribution = distribution;
     await setActionOutput('published', 'false');
     await setActionOutput('skip-reason', 'quote-only');
     await setActionOutput('skill-name', skillName);
     await setActionOutput('skill-version', skillVersion);
+    await setActionOutput('preview-json', '');
+    await setActionOutput('hcs28-json', '');
+    await setActionOutput('hcs28-score-total', '');
+    await setActionOutput('preview-json-path', '');
+    await setActionOutput('status-url', distribution.urls.skillPageUrl);
     await setActionOutput('quote-id', quoteId);
     await setActionOutput('job-id', '');
     await setActionOutput('directory-topic-id', '');
@@ -863,6 +1946,24 @@ const run = async () => {
     await setActionOutput('annotation-target', 'none');
     await setActionOutput('indexnow-result', '');
     await setDistributionOutputs(distribution);
+    await setLifecycleOutputs({
+      previewJson: '',
+      previewJsonPath: '',
+      statusUrl: distribution.urls.skillPageUrl,
+      trustTier: '',
+      publishReadiness: 'quoted',
+      missingRequirements: [],
+      estimatedCreditsRange: `${quoteResult.credits} credits`,
+      managedCommentUrl: quoteCommentResult.url,
+      managedCommentStatus: quoteCommentResult.status,
+      managedCommentReason: quoteCommentResult.reason,
+      publishCommentUrl: '',
+      publishCommentStatus: 'disabled',
+      releaseAnnotationStatus: 'disabled',
+      purchaseUrl: distribution.urls.skillPageUrl,
+      publishUrl: distribution.urls.skillPageUrl,
+      verificationUrl: distribution.urls.skillPageUrl,
+    });
     await setActionOutput('result-json', JSON.stringify(quoteResult, null, 2));
     if (jsonOutput) {
       printJson(quoteResult);
@@ -874,15 +1975,12 @@ const run = async () => {
     return;
   }
 
-  const publish = await requestJson({
-    method: 'POST',
-    url: buildApiUrl(apiBaseUrl, '/skills/publish'),
+  const publish = await publishSkillRequest({
+    baseUrl: apiBaseUrl,
     apiKey,
-    body: {
-      files,
-      quoteId,
-      ...(accountId ? { accountId } : {}),
-    },
+    accountId,
+    files,
+    quoteId,
   });
 
   const jobId = String(publish?.jobId ?? '').trim();
@@ -896,11 +1994,16 @@ const run = async () => {
   let lastStatus = '';
   let completedJob = null;
   while (Date.now() - startedAt < pollTimeoutMs) {
-    const job = await requestJsonWithRetry({
-      method: 'GET',
-      url: buildApiUrl(apiBaseUrl, `/skills/jobs/${encodeURIComponent(jobId)}`, accountId ? { accountId } : null),
-      apiKey,
+    const job = await executeWithRetry({
+      label: `GET /skills/jobs/${jobId}`,
       attempts: 3,
+      operation: () =>
+        fetchSkillPublishJob({
+          baseUrl: apiBaseUrl,
+          apiKey,
+          accountId,
+          jobId,
+        }),
     });
     const status = String(job?.status ?? '').trim();
     if (status && status !== lastStatus) {
@@ -944,16 +2047,57 @@ const run = async () => {
 
   const markdown = buildPublishMarkdown(result);
   const eventPayload = await parseEventPayload();
-  const annotationTarget = await annotateResult({
+  const [owner = '', repo = ''] = repository.split('/', 2);
+  const explicitPublishGroupKey =
+    explicitGroupKey ||
+    buildDefaultManagedCommentGroupKey({
+      repository,
+      pullNumber: Number(eventPayload?.pull_request?.number ?? 0) || null,
+      skillName: result.skillName,
+      skillDir: skillDirInput,
+    });
+  const releaseId = Number(eventPayload?.release?.id ?? 0);
+  const annotationResult = await syncPublishAnnotations({
+    githubApiRequest,
     shouldAnnotate,
-    token: githubToken,
-    markdown,
-    jobId,
+    token: githubToken || getEnv('GITHUB_TOKEN'),
+    owner,
+    repo,
+    eventName,
     eventPayload,
+    releaseId,
+    commitSha,
+    groupKey: explicitPublishGroupKey,
+    skillName: result.skillName,
+    skillVersion: result.skillVersion,
+    published: true,
+    skipReason: '',
+    credits: String(result.credits ?? ''),
+    estimatedCostHbar: String(result.estimatedCostHbar ?? ''),
+    quoteId: result.quoteId,
+    jobId: result.jobId,
+    skillJsonHrl: result.skillJsonHrl,
+    directoryTopicId: result.directoryTopicId,
+    packageTopicId: result.packageTopicId,
+    repoUrl: result.repoUrl,
+    excludedFiles: result.excludedFiles,
+    workflowRunUrl: getWorkflowRunUrl(),
+    distribution: result.distribution,
   }).catch(error => {
     stderr(`Annotation failed: ${error instanceof Error ? error.message : String(error)}`);
-    return 'failed';
+    return {
+      annotationTarget: 'failed',
+      publishComment: createAnnotationResult({
+        status: 'failed',
+        reason: error instanceof Error ? error.message : String(error),
+      }),
+      releaseBlock: createAnnotationResult({
+        status: 'failed',
+        reason: error instanceof Error ? error.message : String(error),
+      }),
+    };
   });
+  const annotationTarget = annotationResult.annotationTarget;
 
   await appendStepSummary(markdown);
 
@@ -961,6 +2105,11 @@ const run = async () => {
   await setActionOutput('skip-reason', '');
   await setActionOutput('skill-name', result.skillName);
   await setActionOutput('skill-version', result.skillVersion);
+  await setActionOutput('preview-json', '');
+  await setActionOutput('hcs28-json', '');
+  await setActionOutput('hcs28-score-total', '');
+  await setActionOutput('preview-json-path', '');
+  await setActionOutput('status-url', result.distribution.urls.skillPageUrl);
   await setActionOutput('quote-id', result.quoteId);
   await setActionOutput('job-id', result.jobId);
   await setActionOutput('directory-topic-id', result.directoryTopicId ?? '');
@@ -969,6 +2118,24 @@ const run = async () => {
   await setActionOutput('credits', String(result.credits ?? 0));
   await setActionOutput('estimated-cost-hbar', String(result.estimatedCostHbar ?? ''));
   await setActionOutput('annotation-target', annotationTarget);
+  await setLifecycleOutputs({
+    previewJson: '',
+    previewJsonPath: '',
+    statusUrl: result.distribution.urls.skillPageUrl,
+    trustTier: 'published',
+    publishReadiness: 'published',
+    missingRequirements: [],
+    estimatedCreditsRange: '',
+    managedCommentUrl: '',
+    managedCommentStatus: 'disabled',
+    managedCommentReason: 'publish-mode',
+    publishCommentUrl: annotationResult.publishComment?.url ?? '',
+    publishCommentStatus: annotationResult.publishComment?.status ?? '',
+    releaseAnnotationStatus: annotationResult.releaseBlock?.status ?? '',
+    purchaseUrl: '',
+    publishUrl: result.distribution.urls.skillPageUrl,
+    verificationUrl: result.distribution.urls.skillPageUrl,
+  });
   const indexNowResult = await maybeSubmitIndexNow(
     result.distribution,
     shouldSubmitIndexNow,
@@ -996,6 +2163,15 @@ run().catch(async error => {
   stderr(`Error: ${message}`);
   const outputPath = getEnv('GITHUB_OUTPUT');
   if (outputPath) {
+    await setActionOutput('preview-json', '');
+    await setActionOutput('hcs28-json', '');
+    await setActionOutput('hcs28-score-total', '');
+    await setActionOutput('preview-json-path', '');
+    await setActionOutput('status-url', '');
+    await setActionOutput('managed-comment-status', 'failed');
+    await setActionOutput('managed-comment-reason', message);
+    await setActionOutput('publish-comment-status', 'failed');
+    await setActionOutput('release-annotation-status', 'failed');
     await setActionOutput('annotation-target', 'failed');
   }
   process.exit(1);

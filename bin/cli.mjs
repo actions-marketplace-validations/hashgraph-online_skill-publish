@@ -14,7 +14,11 @@ import { loadCredential } from './lib/credential-store.mjs';
 import { runDoctorCommand } from './lib/doctor-command.mjs';
 import { runDistributionCommand } from './lib/distribution-commands.mjs';
 import { runInitCommand, runSetupCommand } from './lib/local-commands.mjs';
-import { runScaffoldRepoCommand, runSetupActionCommand } from './lib/repo-commands.mjs';
+import {
+  runInspectRepoCommand,
+  runScaffoldRepoCommand,
+  runSetupActionCommand,
+} from './lib/repo-commands.mjs';
 import { runStartCommand } from './lib/start-command.mjs';
 import { COMMAND_ALIASES, HELP_BY_COMMAND, buildGlobalHelp } from './lib/cli-help.mjs';
 
@@ -22,6 +26,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const packagePath = path.resolve(__dirname, '..', 'package.json');
 const packageJson = JSON.parse(readFileSync(packagePath, 'utf8'));
+const MODE_FLAGS = new Set(['validate', 'monitor', 'quote', 'publish']);
 
 const OPTION_ENV_MAP = new Map([
   ['api-base-url', 'INPUT_API_BASE_URL'],
@@ -53,6 +58,7 @@ const BOOLEAN_OPTIONS = new Set([
   'fix',
   'local-only',
   'publish',
+  'with-validate',
 ]);
 
 const VALUE_OPTIONS = new Set([
@@ -78,6 +84,7 @@ const VALUE_OPTIONS = new Set([
   'store-path',
   'trigger',
   'workflow-path',
+  'validate-workflow-path',
   'repo-dir',
   'readme-path',
   'docs-path',
@@ -300,6 +307,25 @@ function adoptPositionalSkillDir(options, positionals) {
 async function runPublishCommand(options, positionals) {
   adoptPositionalSkillDir(options, positionals);
   applyPublishDefaults(options);
+  const modeOverride = String(options.mode ?? '').trim().toLowerCase();
+  if (modeOverride === 'validate') {
+    await runEntrypoint('validate', options);
+    return;
+  }
+  if (modeOverride === 'monitor') {
+    await runEntrypoint('monitor', options);
+    return;
+  }
+  if (modeOverride === 'quote') {
+    if (!options['api-key']) {
+      fail(
+        'Missing API key. Pass --api-key, set RB_API_KEY, or run `npx skill-publish setup --account-id <id> --hedera-private-key <key>`.',
+        'quote',
+      );
+    }
+    await runEntrypoint('quote', options);
+    return;
+  }
   const shouldPrintInformational = !Boolean(options.json);
 
   if (options['dry-run']) {
@@ -321,7 +347,7 @@ async function runPublishCommand(options, positionals) {
 
   if (!options['api-key']) {
     fail(
-      'Missing API key. Pass --api-key, set RB_API_KEY, or run `npx skill-publish setup --account-id <id> --hedera-private-key <key>`.',
+      'Missing API key. Pass --api-key, set RB_API_KEY, or run `npx skill-publish setup --account-id <id> --hedera-private-key <key>`. Publish also requires funded broker credits because the release is inscribed on-chain.',
       'publish',
     );
   }
@@ -334,12 +360,18 @@ async function runValidateCommand(options, positionals) {
   await runEntrypoint('validate', options);
 }
 
+async function runMonitorCommand(options, positionals) {
+  adoptPositionalSkillDir(options, positionals);
+  applyCommonDefaults(options);
+  await runEntrypoint('monitor', options);
+}
+
 async function runQuoteCommand(options, positionals) {
   adoptPositionalSkillDir(options, positionals);
   applyCommonDefaults(options);
   if (!options['api-key']) {
     fail(
-      'Missing API key. Pass --api-key, set RB_API_KEY, or run `npx skill-publish setup --account-id <id> --hedera-private-key <key>`.',
+      'Missing API key. Pass --api-key, set RB_API_KEY, or run `npx skill-publish setup --account-id <id> --hedera-private-key <key>` before requesting an authenticated publish quote.',
       'quote',
     );
   }
@@ -353,6 +385,10 @@ async function dispatchCommand(command, options, positionals) {
   }
   if (command === 'validate') {
     await runValidateCommand(options, positionals);
+    return;
+  }
+  if (command === 'monitor') {
+    await runMonitorCommand(options, positionals);
     return;
   }
   if (command === 'quote') {
@@ -416,6 +452,13 @@ async function dispatchCommand(command, options, positionals) {
     });
     return;
   }
+  if (command === 'inspect-repo') {
+    await runInspectRepoCommand(options, positionals, {
+      fail,
+      colors: colors(),
+    });
+    return;
+  }
   if (command === 'doctor') {
     adoptPositionalSkillDir(options, positionals);
     applyCommonDefaults(options);
@@ -470,6 +513,15 @@ async function run() {
 
   if (options['no-color']) {
     palette = createColors(false);
+  }
+
+  const modeOverride = String(options.mode ?? '').trim().toLowerCase();
+  if (command === 'publish' && modeOverride) {
+    if (!MODE_FLAGS.has(modeOverride)) {
+      fail(`Unsupported mode: ${modeOverride}`, 'publish');
+    }
+    await dispatchCommand(modeOverride, options, positionals);
+    return;
   }
 
   await dispatchCommand(command, options, positionals);
